@@ -72,6 +72,8 @@ Best for:
 - pellet stoves
 - devices with their own thermostat logic that should stay in control internally
 
+An AC in `Direct` mode decides itself when its compressor runs. Once a run has started, RoomMind leaves it to the AC to end it, as long as the AC reports that it is still heating or cooling (`hvac_action`): RoomMind does not switch it off just because the room has reached the target, only when the room is 0.5 °C past it or, in `Auto` rooms, reaches the target of the other side. This needs every AC in the room set to `Direct` and, for heating, no TRVs in the room. ACs that report no `hvac_action` are switched off at the target after the minimum run time, as before.
+
 #### Setpoint offset
 
 Some devices measure the room differently than your room sensor, for example an AC mounted near the floor that cools its own sensor. With `Direct` and an external room sensor you can set a `Setpoint offset` (-5 to +5 °C, step 0.5, default 0). It is added to the room target before the target is sent to the device, for heating and cooling alike.

@@ -871,6 +871,8 @@ HARD_OVERSHOOT_CEILING = 1.0  # °C — model-independent max overshoot before f
 # or not) uses the bang-bang hysteresis. Cooling with 0.2 K let a sunny room sit above
 # the cool target almost three times as long for ~7 % fewer starts (sim ekf-summer-ac).
 MPC_START_HYSTERESIS = 0.1
+# A direct AC's own run continues at most this far past the target (a typical unit deadband)
+DIRECT_RUN_STOP_K = 0.5
 _TEMP_EPSILON = 1e-6  # sensor floats like 20.899999999999 still read 20.9
 
 # Minimum sample counts before MPC is allowed.
@@ -1470,6 +1472,48 @@ class MPCController:
         min_run_seconds = get_min_run_blocks(system, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
         return (time.time() - self._mode_on_since) < min_run_seconds
 
+    def _direct_unit_running(self, mode: str, current_temp: float, targets: TargetTemps) -> bool:
+        """Whether a run of *mode* is still a direct AC's own compressor run, which it ends itself.
+
+        A direct unit holds the room target in its own deadband: its compressor starts
+        past the target and stops on its own once through it. The min run, counted from
+        RoomMind's start, ran out while the unit still idled, so the run was cut at the
+        target a few minutes in and the starts doubled against the unit alone. Only when
+        every AC is direct, no TRV heats along on its boost, never into the target of the
+        other side and at most ``DIRECT_RUN_STOP_K`` past the target: a unit reading warm (or
+        reporting its mode as action) would otherwise cool on to the hard ceiling.
+        """
+        if self.previous_mode != mode or not self.acs or not self._direct_eids.issuperset(self.acs):
+            return False
+        # Only an auto room has a target on the other side (cool_only mirrors heat onto cool)
+        both_sides = self.climate_mode == "auto"
+        if mode == MODE_HEATING:
+            if (
+                self.thermostats
+                or targets.heat is None
+                or current_temp >= targets.heat + DIRECT_RUN_STOP_K
+                or (both_sides and targets.cool is not None and current_temp >= targets.cool)
+            ):
+                return False
+            running: tuple[str, ...] = ("heating", "preheating", "defrosting")
+        else:
+            if (
+                targets.cool is None
+                or current_temp <= targets.cool - DIRECT_RUN_STOP_K
+                or (both_sides and targets.heat is not None and current_temp <= targets.heat)
+            ):
+                return False
+            running = ("cooling",)
+        for eid in self.acs:
+            state = self.hass.states.get(eid)
+            if (
+                state is not None
+                and state.state not in ("unavailable", "unknown", "off")
+                and state.attributes.get("hvac_action") in running
+            ):
+                return True
+        return False
+
     def _setback_hold_over(self) -> bool:
         """Whether the room has been idle long enough for a setback device to switch off."""
         if self.previous_mode != MODE_IDLE or self._idle_since is None:
@@ -1674,8 +1718,12 @@ class MPCController:
                 guard_blocks=guard_blocks,
                 slow_heat=is_slow_heat(min_run),
                 previous_mode=self.previous_mode,
-                heat_in_min_run=self._within_min_run(MODE_HEATING),
-                cool_in_min_run=self._within_min_run(MODE_COOLING),
+                heat_in_min_run=(
+                    self._within_min_run(MODE_HEATING) or self._direct_unit_running(MODE_HEATING, current_temp, targets)
+                ),
+                cool_in_min_run=(
+                    self._within_min_run(MODE_COOLING) or self._direct_unit_running(MODE_COOLING, current_temp, targets)
+                ),
                 can_heat=can_heat,
                 can_cool=can_cool,
                 heat_hysteresis=heat_start_hysteresis(
@@ -1756,15 +1804,19 @@ class MPCController:
         capped = self._mpc_enabled and not is_slow_heat(get_min_run_blocks(self._run_system, PLAN_DT_MINUTES))
         ceiling = HARD_OVERSHOOT_CEILING if capped else math.inf
         if self.previous_mode == MODE_HEATING and can_heat and heat_target is not None:
-            if current_temp < heat_target or (
-                self._within_min_run(MODE_HEATING) and current_temp < heat_target + ceiling
+            if (
+                current_temp < heat_target
+                or (self._within_min_run(MODE_HEATING) and current_temp < heat_target + ceiling)
+                or self._direct_unit_running(MODE_HEATING, current_temp, targets)
             ):
                 return MODE_HEATING
             return MODE_IDLE
 
         if self.previous_mode == MODE_COOLING and can_cool and cool_target is not None:
-            if current_temp > cool_target or (
-                self._within_min_run(MODE_COOLING) and current_temp > cool_target - ceiling
+            if (
+                current_temp > cool_target
+                or (self._within_min_run(MODE_COOLING) and current_temp > cool_target - ceiling)
+                or self._direct_unit_running(MODE_COOLING, current_temp, targets)
             ):
                 return MODE_COOLING
             return MODE_IDLE

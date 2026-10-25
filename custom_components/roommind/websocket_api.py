@@ -27,6 +27,12 @@ from .const import (
     is_override_suppressed,
 )
 from .control.direct_valve import async_release_valve
+from .managers.boiler_release import (
+    DEFAULT_RELEASE_MAX_WAIT_MINUTES,
+    DEFAULT_RELEASE_MIN_DEMAND,
+    DEFAULT_RELEASE_URGENT_DELTA,
+    RELEASE_ENTITY_DOMAINS,
+)
 from .services.analytics_service import (
     _compute_target_forecast,  # noqa: F401 - re-exported for tests
     _csv_to_points,  # noqa: F401 - re-exported for tests
@@ -153,6 +159,7 @@ _ROOM_SAVE_FIELDS = (
     "heat_source_ac_min_outdoor",
     "valve_protection_exclude",
     "climate_control_enabled",
+    "show_thermostat",
 )
 
 _SETTINGS_SAVE_FIELDS = (
@@ -363,6 +370,7 @@ async def websocket_list_rooms(
             ),
             "coil_dry_drain_minutes": settings.get("coil_dry_drain_minutes", DEFAULT_COIL_DRY_DRAIN_MINUTES),
             "compressor_groups": settings.get("compressor_groups", []),
+            "compressor_release": coordinator.get_release_status() if coordinator else {},
         },
     )
 
@@ -453,6 +461,7 @@ async def websocket_list_rooms(
         vol.Optional("heat_source_outdoor_threshold"): vol.All(vol.Coerce(float), vol.Range(min=-20, max=25)),
         vol.Optional("heat_source_ac_min_outdoor"): vol.All(vol.Coerce(float), vol.Range(min=-30, max=5)),
         vol.Optional("climate_control_enabled"): bool,
+        vol.Optional("show_thermostat"): bool,
     }
 )
 @websocket_api.async_response
@@ -755,15 +764,26 @@ async def websocket_get_settings(
                 vol.Required("name"): str,
                 vol.Required("members"): vol.All([str], vol.Length(min=1)),
                 vol.Optional("min_run_minutes", default=DEFAULT_COMPRESSOR_MIN_RUN_MINUTES): vol.All(
-                    vol.Coerce(int), vol.Range(min=1, max=60)
+                    vol.Coerce(int), vol.Range(min=1, max=120)
                 ),
                 vol.Optional("min_off_minutes", default=DEFAULT_COMPRESSOR_MIN_OFF_MINUTES): vol.All(
-                    vol.Coerce(int), vol.Range(min=1, max=30)
+                    vol.Coerce(int), vol.Range(min=1, max=60)
                 ),
                 vol.Optional("master_entity", default=""): str,
                 vol.Optional("conflict_resolution", default=DEFAULT_CONFLICT_RESOLUTION): vol.In(CONFLICT_RESOLUTIONS),
                 vol.Optional("action_script", default=""): str,
                 vol.Optional("enforce_uniform_mode", default=False): bool,
+                vol.Optional("release_entity", default=""): str,
+                vol.Optional("release_min_demand", default=DEFAULT_RELEASE_MIN_DEMAND): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=50)
+                ),
+                vol.Optional("release_smart", default=False): bool,
+                vol.Optional("release_urgent_delta", default=DEFAULT_RELEASE_URGENT_DELTA): vol.All(
+                    vol.Coerce(float), vol.Range(min=0.3, max=5.0)
+                ),
+                vol.Optional("release_max_wait_minutes", default=DEFAULT_RELEASE_MAX_WAIT_MINUTES): vol.All(
+                    vol.Coerce(int), vol.Range(min=5, max=240)
+                ),
             }
         ],
     }
@@ -838,6 +858,14 @@ async def websocket_save_settings(
                     )
                     return
                 all_masters.append(master)
+            release = g.get("release_entity", "")
+            if release and release.split(".", 1)[0] not in RELEASE_ENTITY_DOMAINS:
+                connection.send_error(
+                    msg["id"],
+                    "invalid_release_entity",
+                    f"Release entity '{release}' must be an input_boolean or switch",
+                )
+                return
             script = g.get("action_script", "")
             if script and not script.startswith("script."):
                 connection.send_error(

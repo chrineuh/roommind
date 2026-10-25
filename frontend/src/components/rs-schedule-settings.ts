@@ -17,6 +17,11 @@ import { RsScheduleBase } from "./shared/rs-schedule-base";
 import { inputStyles } from "../styles/input-styles";
 
 /** Mirrors _WEEKDAYS in the backend's schedule_utils.py. */
+const ICON_EDIT =
+  "M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z";
+const ICON_CALENDAR_PLUS =
+  "M19,19V8H5V19H19M16,1H18V3H19A2,2 0 0,1 21,5V19A2,2 0 0,1 19,21H5C3.89,21 3,20.1 3,19V5C3,3.89 3.89,3 5,3H6V1H8V3H16V1M11,9.5H13V12.5H16V14.5H13V17.5H11V14.5H8V12.5H11V9.5Z";
+
 const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
 @customElement("rs-schedule-settings")
@@ -47,6 +52,29 @@ export class RsScheduleSettings extends RsScheduleBase {
     RsScheduleBase.sharedStyles,
     inputStyles,
     css`
+      .create-schedule-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin: 0 0 12px;
+        padding: 6px 12px;
+        border-radius: 8px;
+        border: 1px dashed var(--primary-color);
+        background: none;
+        color: var(--primary-color);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .create-schedule-btn ha-svg-icon {
+        --mdc-icon-size: 18px;
+      }
+      .edit-schedule-btn {
+        --mdc-icon-button-size: 28px;
+        --mdc-icon-size: 16px;
+        flex-shrink: 0;
+      }
+
       .fallback-hint {
         font-size: 11px;
         color: var(--secondary-text-color);
@@ -166,13 +194,21 @@ export class RsScheduleSettings extends RsScheduleBase {
                         >${this._getFriendlyName(schedule.entity_id)}</span
                       >
                       <span class="schedule-status">${this._getStatusText(index, state)}</span>
+                      <span class="schedule-controls">
+                        <ha-icon-button
+                          .path=${ICON_EDIT}
+                          .label=${localize("schedule_editor.edit", l)}
+                          @click=${() => this._requestEditor(schedule.entity_id)}
+                        ></ha-icon-button>
+                      </span>
                     </div>
                     ${this._renderRejectedTempWarning(state)}
                   `;
                 })}
               </div>
             `
-          : html`<div class="no-schedules">${localize("schedule.no_schedules", l)}</div>`
+          : html`<div class="no-schedules">${localize("schedule.no_schedules", l)}</div>
+              ${this._renderCreateButton(l)}`
       }
       ${
         this.climateMode === "auto"
@@ -234,7 +270,7 @@ export class RsScheduleSettings extends RsScheduleBase {
     const usedIds = new Set(this.schedules.map((s) => s.entity_id));
 
     return html`
-      ${this._renderScheduleList()}
+      ${this._renderScheduleList()} ${this._renderCreateButton(l)}
       ${this._renderAddRow(
         localize("schedule.select_schedule", l),
         this._getAvailableEntities(usedIds),
@@ -250,6 +286,26 @@ export class RsScheduleSettings extends RsScheduleBase {
       )}
       ${this._renderTemperatureInputs(l)}
     `;
+  }
+
+  private _renderCreateButton(l: string) {
+    return html`
+      <button class="create-schedule-btn" @click=${() => this._requestEditor("")}>
+        <ha-svg-icon .path=${ICON_CALENDAR_PLUS}></ha-svg-icon>
+        ${localize("schedule_editor.create", l)}
+      </button>
+    `;
+  }
+
+  /** Ask the room view to open the weekly editor ("" = new schedule). */
+  private _requestEditor(entityId: string) {
+    this.dispatchEvent(
+      new CustomEvent("schedule-edit-request", {
+        detail: { entityId },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   // ─── Schedule list ─────────────────────────────────────────────
@@ -272,6 +328,12 @@ export class RsScheduleSettings extends RsScheduleBase {
               <span class="schedule-status-dot"></span>
               <span class="schedule-name">${this._getFriendlyName(schedule.entity_id)}</span>
               <span class="schedule-status">${this._getStatusText(index, state)}</span>
+              <ha-icon-button
+                class="edit-schedule-btn"
+                .path=${ICON_EDIT}
+                .label=${localize("schedule_editor.edit", l)}
+                @click=${() => this._requestEditor(schedule.entity_id)}
+              ></ha-icon-button>
               ${this._renderScheduleControls(
                 index,
                 count,

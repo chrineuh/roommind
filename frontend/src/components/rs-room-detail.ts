@@ -22,6 +22,8 @@ import "./rs-override-section";
 import "./rs-presence-section";
 import "./rs-covers-section";
 import "./rs-heat-source-section";
+import "./rs-thermostat-card";
+import "./rs-schedule-editor";
 import "../components/shared/rs-toggle-row";
 import "../components/shared/rs-toggle-card";
 import "../components/shared/rs-edit-dialog";
@@ -34,6 +36,10 @@ import type { RsOverrideSection } from "./rs-override-section";
 
 const CONTROL_DOCS_URL =
   "https://github.com/snazzybean/roommind/blob/main/docs/control-and-devices.md";
+
+const SAVE_DEBOUNCE_MS = 500;
+const SAVE_RETRY_DELAY_MS = 2000;
+const SAVE_MAX_RETRIES = 3;
 
 type EditableSection = "schedule" | "devices" | "sensors" | "presence" | "covers" | "heatSource";
 
@@ -92,6 +98,9 @@ export class RsRoomDetail extends LitElement {
   @state() private _isOutdoor = false;
   @state() private _valveProtectionExclude: Set<string> = new Set();
   @state() private _climateControlEnabled = true;
+  @state() private _showThermostat = true;
+  /** Schedule open in the weekly editor: null = closed, "" = new schedule. */
+  @state() private _scheduleEditorEntity: string | null = null;
   @state() private _heatSourceOrchestration = false;
   @state() private _heatSourcePrimaryDelta = 1.5;
   @state() private _heatSourceOutdoorThreshold = 5.0;
@@ -100,6 +109,11 @@ export class RsRoomDetail extends LitElement {
 
   private _prevAreaId: string | null = null;
   private _saveDebounce?: ReturnType<typeof setTimeout>;
+  /** Save currently on the wire; saves run one after another so the last edit always wins. */
+  private _saveInFlight: Promise<void> | null = null;
+  /** Bumped on every edit; a save only clears _dirty when no edit happened while it ran. */
+  private _editSeq = 0;
+  private _saveRetries = 0;
 
   static styles = css`
     :host {
@@ -216,7 +230,19 @@ export class RsRoomDetail extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this._saveDebounce) clearTimeout(this._saveDebounce);
+    // Leaving the room view must not drop an edit that is still waiting for the debounce.
+    this._flushSave();
+  }
+
+  willUpdate(changedProps: Map<string, unknown>) {
+    // Switching rooms: write the pending edit to the room it belongs to before
+    // _initFromConfig() replaces the local state with the next room's config.
+    if (changedProps.has("area") || changedProps.has("config")) {
+      const currentAreaId = this.config?.area_id ?? this.area?.area_id ?? null;
+      if (this._prevAreaId !== null && currentAreaId !== this._prevAreaId) {
+        this._flushSave(this._prevAreaId);
+      }
+    }
   }
 
   updated(changedProps: Map<string, unknown>) {
@@ -297,6 +323,7 @@ export class RsRoomDetail extends LitElement {
       this._isOutdoor = this.config.is_outdoor ?? false;
       this._valveProtectionExclude = new Set(this.config.valve_protection_exclude ?? []);
       this._climateControlEnabled = this.config.climate_control_enabled ?? true;
+      this._showThermostat = this.config.show_thermostat ?? true;
       this._heatSourceOrchestration = this.config.heat_source_orchestration ?? false;
       this._heatSourcePrimaryDelta = this.config.heat_source_primary_delta ?? 1.5;
       this._heatSourceOutdoorThreshold = this.config.heat_source_outdoor_threshold ?? 5.0;
@@ -339,6 +366,7 @@ export class RsRoomDetail extends LitElement {
       this._isOutdoor = false;
       this._valveProtectionExclude = new Set();
       this._climateControlEnabled = true;
+      this._showThermostat = true;
       this._heatSourceOrchestration = false;
       this._heatSourcePrimaryDelta = 1.5;
       this._heatSourceOutdoorThreshold = 5.0;
@@ -392,7 +420,7 @@ export class RsRoomDetail extends LitElement {
     if (!this.area) return nothing;
 
     return html`
-      <div class="detail-layout">
+      <div class="detail-layout" @schedule-edit-request=${this._onScheduleEditRequest}>
         <rs-hero-status
           .hass=${this.hass}
           .area=${this.area}
@@ -414,6 +442,24 @@ export class RsRoomDetail extends LitElement {
                     .checked=${this._climateControlEnabled}
                     @toggle-changed=${this._onClimateControlToggle}
                   ></rs-toggle-card>
+                  ${
+                    this._showThermostat && this.config
+                      ? html`
+                          <rs-section-card
+                            icon="mdi:thermostat"
+                            .heading=${localize("room.section.thermostat", this.hass.language)}
+                          >
+                            <rs-info-icon slot="header-extras">
+                              ${localize("thermostat.info", this.hass.language)}
+                            </rs-info-icon>
+                            <rs-thermostat-card
+                              .hass=${this.hass}
+                              .areaId=${this.area.area_id}
+                            ></rs-thermostat-card>
+                          </rs-section-card>
+                        `
+                      : nothing
+                  }
 
                   <rs-section-card
                     icon="mdi:cog"
@@ -626,6 +672,17 @@ export class RsRoomDetail extends LitElement {
                 </rs-section-card>`
               : nothing
           }
+          ${
+            !this._isOutdoor
+              ? html`<rs-toggle-card
+                  icon="mdi:thermostat"
+                  .label=${localize("room.thermostat_toggle", this.hass.language)}
+                  .hint=${localize("room.thermostat_hint", this.hass.language)}
+                  .checked=${this._showThermostat}
+                  @toggle-changed=${this._onShowThermostatToggle}
+                ></rs-toggle-card>`
+              : nothing
+          }
 
           <rs-toggle-card
             icon="mdi:tree"
@@ -637,6 +694,15 @@ export class RsRoomDetail extends LitElement {
         </div>
         ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
         ${this._renderEditDialog()}
+        <rs-schedule-editor
+          .hass=${this.hass}
+          .open=${this._scheduleEditorEntity !== null}
+          .entityId=${this._scheduleEditorEntity ?? ""}
+          .climateMode=${this._climateMode}
+          .defaultName=${this._displayName || this.area.name}
+          @schedule-editor-closed=${this._onScheduleEditorClosed}
+          @schedule-saved=${this._onScheduleSaved}
+        ></rs-schedule-editor>
       </div>
     `;
   }
@@ -1100,6 +1166,30 @@ export class RsRoomDetail extends LitElement {
     this._autoSave();
   }
 
+  private _onScheduleEditRequest = (e: CustomEvent<{ entityId: string }>) => {
+    e.stopPropagation();
+    this._scheduleEditorEntity = e.detail.entityId;
+  };
+
+  private _onScheduleEditorClosed = (e: Event) => {
+    e.stopPropagation();
+    this._scheduleEditorEntity = null;
+  };
+
+  private _onScheduleSaved = (e: CustomEvent<{ entityId: string; created: boolean }>) => {
+    e.stopPropagation();
+    const { entityId, created } = e.detail;
+    if (created && entityId && !this._schedules.some((s) => s.entity_id === entityId)) {
+      this._schedules = [...this._schedules, { entity_id: entityId }];
+      this._autoSave();
+    }
+  };
+
+  private _onShowThermostatToggle(e: CustomEvent<boolean>) {
+    this._showThermostat = e.detail;
+    this._autoSave();
+  }
+
   private _onOutdoorToggle(e: CustomEvent<boolean>) {
     this._isOutdoor = e.detail;
     this._autoSave();
@@ -1114,62 +1204,98 @@ export class RsRoomDetail extends LitElement {
 
   private _autoSave() {
     this._dirty = true;
+    this._editSeq++;
     if (this._saveDebounce) clearTimeout(this._saveDebounce);
-    this._saveDebounce = setTimeout(() => this._doSave(), 500);
+    this._saveDebounce = setTimeout(() => {
+      this._saveDebounce = undefined;
+      void this._doSave();
+    }, SAVE_DEBOUNCE_MS);
   }
 
-  private async _doSave() {
+  /** Send a pending debounced save right away (room switch, leaving the view). */
+  private _flushSave(areaId?: string) {
+    if (!this._saveDebounce) return;
+    clearTimeout(this._saveDebounce);
+    this._saveDebounce = undefined;
+    void this._doSave(areaId);
+  }
+
+  private _buildSavePayload(areaId: string): Record<string, unknown> {
+    return {
+      type: "roommind/rooms/save",
+      area_id: areaId,
+      devices: this._devices,
+      temperature_sensor: this._selectedTempSensor,
+      humidity_sensor: this._selectedHumiditySensor,
+      occupancy_sensors: [...this._selectedOccupancySensors],
+      occupancy_eco_enabled: this._occupancyEcoEnabled,
+      occupancy_eco_delay: this._occupancyEcoDelay,
+      window_sensors: [...this._selectedWindowSensors],
+      window_open_delay: this._windowOpenDelay,
+      window_close_delay: this._windowCloseDelay,
+      climate_mode: this._climateMode,
+      schedules: this._schedules,
+      schedule_selector_entity: this._scheduleSelectorEntity,
+      comfort_heat: this._comfortHeat,
+      comfort_cool: this._comfortCool,
+      eco_heat: this._ecoHeat,
+      eco_cool: this._ecoCool,
+      presence_persons: this._selectedPresencePersons.filter((p) => p),
+      display_name: this._displayName,
+      covers: [...this._selectedCovers],
+      climate_control_enabled: this._climateControlEnabled,
+      show_thermostat: this._showThermostat,
+      covers_auto_enabled: this._coversAutoEnabled,
+      covers_deploy_threshold: this._coversDeployThreshold,
+      covers_min_position: this._coversMinPosition,
+      covers_override_minutes: this._coversOverrideMinutes,
+      cover_schedules: this._coverSchedules,
+      cover_schedule_selector_entity: this._coverScheduleSelectorEntity,
+      covers_night_close: this._coversNightClose,
+      covers_night_position: this._coversNightPosition,
+      covers_snap_deploy: this._coversSnapDeploy,
+      cover_orientations: this._coverOrientations,
+      covers_night_close_elevation: this._coversNightCloseElevation,
+      covers_night_close_offset_minutes: this._coversNightCloseOffsetMinutes,
+      covers_outdoor_min_temp: this._coversOutdoorMinTemp,
+      cover_min_positions: this._coverMinPositions,
+      ignore_presence: this._ignorePresence,
+      is_outdoor: this._isOutdoor,
+      valve_protection_exclude: [...this._valveProtectionExclude],
+      heat_source_orchestration: this._heatSourceOrchestration,
+      heat_source_primary_delta: this._heatSourcePrimaryDelta,
+      heat_source_outdoor_threshold: this._heatSourceOutdoorThreshold,
+      heat_source_ac_min_outdoor: this._heatSourceAcMinOutdoor,
+    };
+  }
+
+  private async _doSave(areaId: string = this.area.area_id) {
+    // Snapshot synchronously so later edits or a room switch cannot leak into this save.
+    const payload = this._buildSavePayload(areaId);
+    const seq = this._editSeq;
+    const previous = this._saveInFlight;
+    const run = (async () => {
+      if (previous) await previous.catch(() => undefined);
+      await this._sendSave(payload, seq);
+    })();
+    this._saveInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (this._saveInFlight === run) this._saveInFlight = null;
+    }
+  }
+
+  private async _sendSave(payload: Record<string, unknown>, seq: number) {
     fireSaveStatus(this, "saving");
     this._error = "";
 
     try {
-      await this.hass.callWS({
-        type: "roommind/rooms/save",
-        area_id: this.area.area_id,
-        devices: this._devices,
-        temperature_sensor: this._selectedTempSensor,
-        humidity_sensor: this._selectedHumiditySensor,
-        occupancy_sensors: [...this._selectedOccupancySensors],
-        occupancy_eco_enabled: this._occupancyEcoEnabled,
-        occupancy_eco_delay: this._occupancyEcoDelay,
-        window_sensors: [...this._selectedWindowSensors],
-        window_open_delay: this._windowOpenDelay,
-        window_close_delay: this._windowCloseDelay,
-        climate_mode: this._climateMode,
-        schedules: this._schedules,
-        schedule_selector_entity: this._scheduleSelectorEntity,
-        comfort_heat: this._comfortHeat,
-        comfort_cool: this._comfortCool,
-        eco_heat: this._ecoHeat,
-        eco_cool: this._ecoCool,
-        presence_persons: this._selectedPresencePersons.filter((p) => p),
-        display_name: this._displayName,
-        covers: [...this._selectedCovers],
-        climate_control_enabled: this._climateControlEnabled,
-        covers_auto_enabled: this._coversAutoEnabled,
-        covers_deploy_threshold: this._coversDeployThreshold,
-        covers_min_position: this._coversMinPosition,
-        covers_override_minutes: this._coversOverrideMinutes,
-        cover_schedules: this._coverSchedules,
-        cover_schedule_selector_entity: this._coverScheduleSelectorEntity,
-        covers_night_close: this._coversNightClose,
-        covers_night_position: this._coversNightPosition,
-        covers_snap_deploy: this._coversSnapDeploy,
-        cover_orientations: this._coverOrientations,
-        covers_night_close_elevation: this._coversNightCloseElevation,
-        covers_night_close_offset_minutes: this._coversNightCloseOffsetMinutes,
-        covers_outdoor_min_temp: this._coversOutdoorMinTemp,
-        cover_min_positions: this._coverMinPositions,
-        ignore_presence: this._ignorePresence,
-        is_outdoor: this._isOutdoor,
-        valve_protection_exclude: [...this._valveProtectionExclude],
-        heat_source_orchestration: this._heatSourceOrchestration,
-        heat_source_primary_delta: this._heatSourcePrimaryDelta,
-        heat_source_outdoor_threshold: this._heatSourceOutdoorThreshold,
-        heat_source_ac_min_outdoor: this._heatSourceAcMinOutdoor,
-      });
+      await this.hass.callWS(payload);
 
-      this._dirty = false;
+      // Newer edits keep the view dirty; their own debounced save follows.
+      if (seq === this._editSeq && !this._saveDebounce) this._dirty = false;
+      this._saveRetries = 0;
       fireSaveStatus(this, "saved");
 
       this.dispatchEvent(
@@ -1185,6 +1311,20 @@ export class RsRoomDetail extends LitElement {
           : localize("room.error_save_fallback", this.hass.language);
       this._error = message;
       fireSaveStatus(this, "error");
+      // A dropped connection should not lose the edit: retry the latest state a few times.
+      if (
+        this.isConnected &&
+        payload.area_id === this.area?.area_id &&
+        seq === this._editSeq &&
+        !this._saveDebounce &&
+        this._saveRetries < SAVE_MAX_RETRIES
+      ) {
+        this._saveRetries++;
+        this._saveDebounce = setTimeout(() => {
+          this._saveDebounce = undefined;
+          void this._doSave(payload.area_id as string);
+        }, SAVE_RETRY_DELAY_MS * this._saveRetries);
+      }
     }
   }
 }

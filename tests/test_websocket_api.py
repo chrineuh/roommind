@@ -95,6 +95,7 @@ async def test_list_rooms_empty(ws_hass, store, connection):
             "coil_dry_min_cooling_minutes": 10,
             "coil_dry_drain_minutes": 0,
             "compressor_groups": [],
+            "compressor_release": {},
         },
     )
 
@@ -2737,6 +2738,29 @@ async def test_save_settings_compressor_invalid_action_script(ws_hass, store, co
 
     connection.send_error.assert_called_once()
     assert connection.send_error.call_args[0][1] == "invalid_action_script"
+
+
+@pytest.mark.asyncio
+async def test_save_settings_compressor_invalid_release_entity(ws_hass, store, connection):
+    """Release entity must be an input_boolean or switch."""
+    await store.async_load()
+
+    msg = {
+        "id": 35,
+        "type": "roommind/settings/save",
+        "compressor_groups": [
+            {
+                "id": "g1",
+                "name": "Oil",
+                "members": ["climate.trv1"],
+                "release_entity": "light.burner",
+            },
+        ],
+    }
+    await _save_settings(ws_hass, connection, msg)
+
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "invalid_release_entity"
 
 
 @pytest.mark.asyncio

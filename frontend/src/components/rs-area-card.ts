@@ -380,7 +380,29 @@ export class RsAreaCard extends LitElement {
     `,
   ];
 
+  private _lastRender = 0;
+
+  /**
+   * The card shows RoomMind's live data from `config`; from `hass` it only uses
+   * the language and the temperature unit. HA replaces `hass` on every state
+   * change in the house, so skip those renders, except for an occasional one
+   * that keeps countdowns ("x min left") moving.
+   */
+  protected shouldUpdate(changedProps: Map<string, unknown>): boolean {
+    if (changedProps.size !== 1 || !changedProps.has("hass")) return true;
+    const prev = changedProps.get("hass") as HomeAssistant | undefined;
+    if (
+      !prev ||
+      prev.language !== this.hass.language ||
+      prev.config?.unit_system?.temperature !== this.hass.config?.unit_system?.temperature
+    ) {
+      return true;
+    }
+    return Date.now() - this._lastRender > 30_000;
+  }
+
   render() {
+    this._lastRender = Date.now();
     const hasClimateDevices = this.climateEntityCount > 0;
     const hasClimateSelected =
       (this.config?.devices?.length ?? 0) > 0 ||

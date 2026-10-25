@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant, HassArea, RoomConfig } from "./types";
+import type { HomeAssistant, HassArea, RoomConfig, CompressorReleaseStatus } from "./types";
 import { getEntitiesForArea } from "./utils/room-state";
 import { loadHaElements } from "./load-ha-elements";
 import { localize } from "./utils/localize";
@@ -26,6 +26,30 @@ interface AreaInfo {
   config: RoomConfig | null;
   climateEntityCount: number;
   tempSensorCount: number;
+}
+
+/** Return prev when next has the same JSON content, so Lit sees no change. */
+function keepIfEqual<T>(prev: T, next: T): T {
+  return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+}
+
+/** Reuse room objects whose content did not change since the last poll. */
+function mergeRooms(
+  prev: Record<string, RoomConfig>,
+  next: Record<string, RoomConfig>,
+): Record<string, RoomConfig> {
+  const merged: Record<string, RoomConfig> = {};
+  let changed = Object.keys(prev).length !== Object.keys(next).length;
+  for (const [id, room] of Object.entries(next)) {
+    const old = prev[id];
+    if (old && JSON.stringify(old) === JSON.stringify(room)) {
+      merged[id] = old;
+    } else {
+      merged[id] = room;
+      changed = true;
+    }
+  }
+  return changed ? merged : prev;
 }
 
 @customElement("roommind-panel")
@@ -61,11 +85,15 @@ export class RoomMindPanel extends LitElement {
   @state() private _groupByFloor = false;
   @state() private _reorderMode = false;
   @state() private _elementsLoaded = false;
+  @state() private _compressorRelease: Record<string, CompressorReleaseStatus> = {};
 
   private _refreshInterval?: ReturnType<typeof setInterval>;
   private _routeApplied = false;
   private _saveStatusTimeout?: ReturnType<typeof setTimeout>;
   private _areaInfosCache: AreaInfo[] = [];
+  /** Inputs the cached area infos were computed from; hass changes on every state change. */
+  private _areaInfosKey: unknown[] = [];
+  private _loadRoomsInFlight = false;
   private _boundVisibilityHandler?: () => void;
   private _boundConnectionReady?: () => void;
 
@@ -336,7 +364,7 @@ export class RoomMindPanel extends LitElement {
       this._elementsLoaded = true;
     });
     this._loadRooms();
-    this._refreshInterval = setInterval(() => this._loadRooms(), 5000);
+    this._refreshInterval = setInterval(() => this._pollRooms(), 5000);
     this.addEventListener("save-status", this._onSaveStatus as EventListener);
     if (!this._routeApplied) {
       this._applyRoute();
@@ -680,7 +708,11 @@ export class RoomMindPanel extends LitElement {
   }
 
   private _renderSettings() {
-    return html`<rs-settings .hass=${this.hass} .rooms=${this._rooms}></rs-settings>`;
+    return html`<rs-settings
+      .hass=${this.hass}
+      .rooms=${this._rooms}
+      .compressorRelease=${this._compressorRelease}
+    ></rs-settings>`;
   }
 
   private _computeAreaInfos(): AreaInfo[] {
@@ -774,8 +806,15 @@ export class RoomMindPanel extends LitElement {
     }));
   }
 
+  /** Polling entry point: skip while hidden or while the previous request is still running. */
+  private _pollRooms() {
+    if (document.hidden || this._loadRoomsInFlight) return;
+    void this._loadRooms();
+  }
+
   private async _loadRooms() {
     if (!this.hass) return;
+    this._loadRoomsInFlight = true;
     try {
       const result = await this.hass.callWS<{
         rooms: Record<string, RoomConfig>;
@@ -797,15 +836,22 @@ export class RoomMindPanel extends LitElement {
         coil_dry_minutes: number;
         coil_dry_mode: string;
         coil_dry_fan_mode: string;
+        compressor_release?: Record<string, CompressorReleaseStatus>;
       }>({
         type: "roommind/rooms/list",
       });
-      this._rooms = result.rooms;
+      // Only touch state that really changed, and keep unchanged room objects,
+      // so a poll with no news does not re-render every card and the detail view.
+      this._rooms = mergeRooms(this._rooms, result.rooms);
+      this._compressorRelease = keepIfEqual(
+        this._compressorRelease,
+        result.compressor_release ?? {},
+      );
       this._vacationActive = result.vacation_active ?? false;
       this._vacationTemp = result.vacation_temp ?? null;
       this._vacationUntil = result.vacation_until ?? null;
-      this._hiddenRooms = result.hidden_rooms ?? [];
-      this._roomOrder = result.room_order ?? [];
+      this._hiddenRooms = keepIfEqual(this._hiddenRooms, result.hidden_rooms ?? []);
+      this._roomOrder = keepIfEqual(this._roomOrder, result.room_order ?? []);
       this._groupByFloor = result.group_by_floor ?? false;
       this._controlMode = result.control_mode ?? "mpc";
       this._climateControlActive = result.climate_control_active ?? true;
@@ -816,12 +862,13 @@ export class RoomMindPanel extends LitElement {
       this._coilDryMode = result.coil_dry_mode ?? "fan_only";
       this._coilDryFanMode = result.coil_dry_fan_mode ?? "low";
       this._anyoneHome = result.anyone_home ?? true;
-      this._presencePersons = result.presence_persons ?? [];
+      this._presencePersons = keepIfEqual(this._presencePersons, result.presence_persons ?? []);
       this._presenceAwayAction = result.presence_away_action ?? "eco";
     } catch (err) {
       // eslint-disable-next-line no-console
       console.debug("[RoomMind] loadRooms:", err);
     } finally {
+      this._loadRoomsInFlight = false;
       this._roomsLoaded = true;
     }
   }
@@ -1010,7 +1057,19 @@ export class RoomMindPanel extends LitElement {
       this._applyRoute();
     }
     if (changedProps.has("_rooms") || changedProps.has("hass")) {
-      this._areaInfosCache = this._computeAreaInfos();
+      // Area infos only depend on the registries, the room configs and which
+      // entities exist; recomputing them on every state change is wasted work.
+      const key = [
+        this._rooms,
+        this.hass?.areas,
+        this.hass?.entities,
+        this.hass?.devices,
+        this.hass ? Object.keys(this.hass.states).length : 0,
+      ];
+      if (key.some((v, i) => v !== this._areaInfosKey[i])) {
+        this._areaInfosKey = key;
+        this._areaInfosCache = this._computeAreaInfos();
+      }
     }
   }
 

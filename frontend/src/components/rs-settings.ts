@@ -11,6 +11,7 @@ import type {
   RoomConfig,
   NotificationTarget,
   CompressorGroup,
+  CompressorReleaseStatus,
 } from "../types";
 import { localize } from "../utils/localize";
 import { fireSaveStatus } from "../utils/events";
@@ -33,6 +34,10 @@ import "./settings/rs-settings-reset";
 export class RsSettings extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ attribute: false }) public rooms: Record<string, RoomConfig> = {};
+  @property({ attribute: false }) public compressorRelease: Record<
+    string,
+    CompressorReleaseStatus
+  > = {};
 
   @state() private _groupByFloor = false;
   @state() private _climateControlActive = true;
@@ -77,6 +82,8 @@ export class RsSettings extends LitElement {
   @state() private _loaded = false;
 
   private _saveDebounce?: ReturnType<typeof setTimeout>;
+  /** Saves run one after another so an older request can never overwrite a newer one. */
+  private _saveChain: Promise<void> = Promise.resolve();
 
   connectedCallback() {
     super.connectedCallback();
@@ -85,7 +92,12 @@ export class RsSettings extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this._saveDebounce) clearTimeout(this._saveDebounce);
+    // Switching tabs must not drop an edit that is still waiting for the debounce.
+    if (this._saveDebounce) {
+      clearTimeout(this._saveDebounce);
+      this._saveDebounce = undefined;
+      void this._doSave();
+    }
   }
 
   private async _loadSettings() {
@@ -250,6 +262,7 @@ export class RsSettings extends LitElement {
         <rs-settings-compressor
           .hass=${this.hass}
           .compressorGroups=${this._compressorGroups}
+          .releaseStatus=${this.compressorRelease}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-compressor>
       </rs-settings-panel>
@@ -369,65 +382,78 @@ export class RsSettings extends LitElement {
 
   private _autoSave() {
     if (this._saveDebounce) clearTimeout(this._saveDebounce);
-    this._saveDebounce = setTimeout(() => this._doSave(), 500);
+    this._saveDebounce = setTimeout(() => {
+      this._saveDebounce = undefined;
+      void this._doSave();
+    }, 500);
   }
 
-  private async _doSave() {
-    fireSaveStatus(this, "saving");
+  private _doSave(): Promise<void> {
+    // Snapshot now; send after any save that is still on the wire.
+    const payload = this._buildSavePayload();
+    this._saveChain = this._saveChain.then(() => this._sendSave(payload));
+    return this._saveChain;
+  }
 
+  private async _sendSave(payload: Record<string, unknown>) {
+    fireSaveStatus(this, "saving");
     try {
-      await this.hass.callWS({
-        type: "roommind/settings/save",
-        group_by_floor: this._groupByFloor,
-        climate_control_active: this._climateControlActive,
-        learning_disabled_rooms: this._learningDisabledRooms,
-        outdoor_temp_sensor: this._outdoorTempSensor,
-        outdoor_humidity_sensor: this._outdoorHumiditySensor,
-        outdoor_cooling_min: this._outdoorCoolingMin,
-        outdoor_heating_max: this._outdoorHeatingMax,
-        control_mode: this._controlMode,
-        comfort_weight: this._comfortWeight,
-        weather_entity: this._weatherEntity,
-        outdoor_unavailable_notify: this._outdoorUnavailableNotify,
-        prediction_enabled: this._predictionEnabled,
-        vacation_temp: this._vacationTemp,
-        vacation_until: this._vacationActive
-          ? this._vacationUntil
-            ? new Date(this._vacationUntil).getTime() / 1000
-            : VACATION_SENTINEL
-          : null,
-        presence_enabled: this._presenceEnabled,
-        presence_persons: this._presencePersons.filter((p) => p),
-        presence_away_action: this._presenceAwayAction,
-        presence_clears_override: this._presenceClearsOverride,
-        schedule_off_action: this._scheduleOffAction,
-        valve_protection_enabled: this._valveProtectionEnabled,
-        valve_protection_interval_days: this._valveProtectionInterval,
-        compressor_groups: this._compressorGroups.filter((g) => g.members.length > 0),
-        coil_dry_enabled: this._coilDryEnabled,
-        coil_dry_minutes: this._coilDryMinutes,
-        coil_dry_mode: this._coilDryMode,
-        coil_dry_fan_mode: this._coilDryFanMode,
-        coil_dry_min_cooling_minutes: this._coilDryMinCoolingMinutes,
-        coil_dry_drain_minutes: this._coilDryDrainMinutes,
-        mold_detection_enabled: this._moldDetectionEnabled,
-        mold_humidity_threshold: this._moldHumidityThreshold,
-        mold_f_rsi: this._moldFRsi,
-        mold_sustained_minutes: this._moldSustainedMinutes,
-        mold_notification_cooldown: this._moldNotificationCooldown,
-        mold_notifications_enabled: this._moldNotificationsEnabled,
-        mold_notification_targets: this._moldNotificationTargets.filter((t) => t.entity_id),
-        mold_prevention_enabled: this._moldPreventionEnabled,
-        mold_prevention_intensity: this._moldPreventionIntensity,
-        mold_prevention_notify_enabled: this._moldPreventionNotify,
-        mold_prevention_notify_targets: this._moldPreventionNotify
-          ? this._moldNotificationTargets.filter((t) => t.entity_id)
-          : [],
-      });
+      await this.hass.callWS(payload);
       fireSaveStatus(this, "saved");
     } catch {
       fireSaveStatus(this, "error");
     }
+  }
+
+  private _buildSavePayload(): Record<string, unknown> {
+    return {
+      type: "roommind/settings/save",
+      group_by_floor: this._groupByFloor,
+      climate_control_active: this._climateControlActive,
+      learning_disabled_rooms: this._learningDisabledRooms,
+      outdoor_temp_sensor: this._outdoorTempSensor,
+      outdoor_humidity_sensor: this._outdoorHumiditySensor,
+      outdoor_cooling_min: this._outdoorCoolingMin,
+      outdoor_heating_max: this._outdoorHeatingMax,
+      control_mode: this._controlMode,
+      comfort_weight: this._comfortWeight,
+      weather_entity: this._weatherEntity,
+      outdoor_unavailable_notify: this._outdoorUnavailableNotify,
+      prediction_enabled: this._predictionEnabled,
+      vacation_temp: this._vacationTemp,
+      vacation_until: this._vacationActive
+        ? this._vacationUntil
+          ? new Date(this._vacationUntil).getTime() / 1000
+          : VACATION_SENTINEL
+        : null,
+      presence_enabled: this._presenceEnabled,
+      presence_persons: this._presencePersons.filter((p) => p),
+      presence_away_action: this._presenceAwayAction,
+      presence_clears_override: this._presenceClearsOverride,
+      schedule_off_action: this._scheduleOffAction,
+      valve_protection_enabled: this._valveProtectionEnabled,
+      valve_protection_interval_days: this._valveProtectionInterval,
+      compressor_groups: this._compressorGroups.filter((g) => g.members.length > 0),
+      coil_dry_enabled: this._coilDryEnabled,
+      coil_dry_minutes: this._coilDryMinutes,
+      coil_dry_mode: this._coilDryMode,
+      coil_dry_fan_mode: this._coilDryFanMode,
+      coil_dry_min_cooling_minutes: this._coilDryMinCoolingMinutes,
+      coil_dry_drain_minutes: this._coilDryDrainMinutes,
+      mold_detection_enabled: this._moldDetectionEnabled,
+      mold_humidity_threshold: this._moldHumidityThreshold,
+      mold_f_rsi: this._moldFRsi,
+      mold_sustained_minutes: this._moldSustainedMinutes,
+      mold_notification_cooldown: this._moldNotificationCooldown,
+      mold_notifications_enabled: this._moldNotificationsEnabled,
+      mold_notification_targets: this._moldNotificationTargets.filter((t) => t.entity_id),
+      mold_prevention_enabled: this._moldPreventionEnabled,
+      mold_prevention_intensity: this._moldPreventionIntensity,
+      mold_prevention_notify_enabled: this._moldPreventionNotify,
+      mold_prevention_notify_targets: this._moldPreventionNotify
+        ? this._moldNotificationTargets.filter((t) => t.entity_id)
+        : [],
+    };
   }
 
   static styles = css`

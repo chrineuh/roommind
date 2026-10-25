@@ -107,6 +107,19 @@ export interface CompressorGroup {
   conflict_resolution: ConflictResolution;
   action_script: string;
   enforce_uniform_mode: boolean;
+  /** Boiler release (input_boolean/switch), e.g. for an oil burner. */
+  release_entity?: string;
+  release_min_demand?: number;
+  release_smart?: boolean;
+  release_urgent_delta?: number;
+  release_max_wait_minutes?: number;
+}
+
+export interface CompressorReleaseStatus {
+  on: boolean;
+  reason: string;
+  demand_count: number;
+  weighted_demand: number;
 }
 
 export interface RoomConfig {
@@ -154,6 +167,7 @@ export interface RoomConfig {
   covers_snap_deploy?: boolean;
   cover_min_positions?: Record<string, number>;
   ignore_presence?: boolean;
+  show_thermostat?: boolean;
   is_outdoor?: boolean;
   valve_protection_exclude?: string[];
   heat_source_orchestration?: boolean;

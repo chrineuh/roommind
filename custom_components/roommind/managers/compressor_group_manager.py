@@ -15,6 +15,11 @@ from ..const import (
     DEFAULT_COMPRESSOR_MIN_RUN_MINUTES,
     DEFAULT_CONFLICT_RESOLUTION,
 )
+from .boiler_release import (
+    DEFAULT_RELEASE_MAX_WAIT_MINUTES,
+    DEFAULT_RELEASE_MIN_DEMAND,
+    DEFAULT_RELEASE_URGENT_DELTA,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,6 +37,12 @@ class CompressorGroupConfig:
     conflict_resolution: str = "heating_priority"
     action_script: str = ""
     enforce_uniform_mode: bool = False
+    # Boiler release (e.g. an oil burner enabled by an input_boolean/switch)
+    release_entity: str = ""
+    release_min_demand: int = DEFAULT_RELEASE_MIN_DEMAND
+    release_smart: bool = False
+    release_urgent_delta: float = DEFAULT_RELEASE_URGENT_DELTA
+    release_max_wait_seconds: float = DEFAULT_RELEASE_MAX_WAIT_MINUTES * 60
 
 
 @dataclass
@@ -71,6 +82,11 @@ class CompressorGroupManager:
                 conflict_resolution=g.get("conflict_resolution", DEFAULT_CONFLICT_RESOLUTION),
                 action_script=g.get("action_script", ""),
                 enforce_uniform_mode=g.get("enforce_uniform_mode", False),
+                release_entity=g.get("release_entity", ""),
+                release_min_demand=g.get("release_min_demand", DEFAULT_RELEASE_MIN_DEMAND),
+                release_smart=g.get("release_smart", False),
+                release_urgent_delta=g.get("release_urgent_delta", DEFAULT_RELEASE_URGENT_DELTA),
+                release_max_wait_seconds=g.get("release_max_wait_minutes", DEFAULT_RELEASE_MAX_WAIT_MINUTES) * 60,
             )
             for eid in g.get("members", []):
                 new_entity_map[eid] = gid

@@ -3,7 +3,12 @@
  */
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { HomeAssistant, CompressorGroup, ConflictResolution } from "../../types";
+import type {
+  HomeAssistant,
+  CompressorGroup,
+  CompressorReleaseStatus,
+  ConflictResolution,
+} from "../../types";
 import { localize } from "../../utils/localize";
 import { getSelectValue } from "../../utils/events";
 import "../shared/rs-confirm-button";
@@ -13,6 +18,8 @@ import { inputStyles } from "../../styles/input-styles";
 export class RsSettingsCompressor extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: Array }) public compressorGroups: CompressorGroup[] = [];
+  @property({ attribute: false }) public releaseStatus: Record<string, CompressorReleaseStatus> =
+    {};
 
   static styles = [
     inputStyles,
@@ -73,6 +80,24 @@ export class RsSettingsCompressor extends LitElement {
         margin-top: 16px;
         display: flex;
         justify-content: flex-end;
+      }
+      .release-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 8px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-size: 13px;
+        background: rgba(127, 127, 127, 0.08);
+        color: var(--secondary-text-color);
+      }
+      .release-status.on {
+        background: rgba(255, 129, 0, 0.12);
+        color: var(--state-climate-heat-color, #ff8100);
+      }
+      .release-status ha-icon {
+        --mdc-icon-size: 18px;
       }
       .no-groups {
         color: var(--secondary-text-color);
@@ -162,11 +187,11 @@ export class RsSettingsCompressor extends LitElement {
               .label=${localize("compressor.min_run", l)}
               .suffix=${localize("compressor.min_run_suffix", l)}
               min="1"
-              max="60"
+              max="120"
               step="1"
               @change=${(e: Event) => {
                 const v = parseInt((e.target as HTMLInputElement).value, 10);
-                if (!isNaN(v) && v >= 1 && v <= 60) this._updateGroup(idx, "min_run_minutes", v);
+                if (!isNaN(v) && v >= 1 && v <= 120) this._updateGroup(idx, "min_run_minutes", v);
               }}
             ></ha-textfield>
             <div class="field-hint">${localize("compressor.min_run_hint", l)}</div>
@@ -178,11 +203,11 @@ export class RsSettingsCompressor extends LitElement {
               .label=${localize("compressor.min_off", l)}
               .suffix=${localize("compressor.min_off_suffix", l)}
               min="1"
-              max="30"
+              max="60"
               step="1"
               @change=${(e: Event) => {
                 const v = parseInt((e.target as HTMLInputElement).value, 10);
-                if (!isNaN(v) && v >= 1 && v <= 30) this._updateGroup(idx, "min_off_minutes", v);
+                if (!isNaN(v) && v >= 1 && v <= 60) this._updateGroup(idx, "min_off_minutes", v);
               }}
             ></ha-textfield>
             <div class="field-hint">${localize("compressor.min_off_hint", l)}</div>
@@ -258,6 +283,7 @@ export class RsSettingsCompressor extends LitElement {
               `
             : nothing
         }
+        ${this._renderRelease(group, idx)}
 
         <div class="field-row">
           <ha-entity-picker
@@ -286,6 +312,121 @@ export class RsSettingsCompressor extends LitElement {
           ></rs-confirm-button>
         </div>
       </div>
+    `;
+  }
+
+  private _renderRelease(group: CompressorGroup, idx: number) {
+    const l = this.hass.language;
+    const status = this.releaseStatus[group.id];
+    const numField = (
+      field: "release_min_demand" | "release_urgent_delta" | "release_max_wait_minutes",
+      value: number,
+      label: string,
+      hint: string,
+      min: number,
+      max: number,
+      step: number,
+      suffix = "",
+    ) => html`
+      <div>
+        <ha-textfield
+          type="number"
+          .value=${String(value)}
+          .label=${label}
+          .suffix=${suffix}
+          min=${min}
+          max=${max}
+          step=${step}
+          @change=${(e: Event) => {
+            const v = Number((e.target as HTMLInputElement).value);
+            if (Number.isFinite(v) && v >= min && v <= max) this._updateGroup(idx, field, v);
+          }}
+        ></ha-textfield>
+        <div class="field-hint">${hint}</div>
+      </div>
+    `;
+    return html`
+      <div class="section-label">${localize("compressor.release_title", l)}</div>
+      <ha-entity-picker
+        .hass=${this.hass}
+        .value=${group.release_entity || ""}
+        .includeDomains=${["input_boolean", "switch"]}
+        .label=${localize("compressor.release_entity", l)}
+        @value-changed=${(e: CustomEvent) => {
+          this._updateGroup(idx, "release_entity", (e.detail?.value as string) ?? "");
+        }}
+      ></ha-entity-picker>
+      <div class="field-hint">${localize("compressor.release_entity_hint", l)}</div>
+      ${
+        group.release_entity
+          ? html`
+              ${
+                status
+                  ? html`<div class="release-status ${status.on ? "on" : ""}">
+                      <ha-icon icon=${status.on ? "mdi:fire" : "mdi:fire-off"}></ha-icon>
+                      ${localize(status.on ? "compressor.release_on" : "compressor.release_off", l)}
+                      · ${localize(`compressor.release_reason.${status.reason}` as never, l)} ·
+                      ${localize("compressor.release_demand", l, {
+                        count: status.demand_count,
+                        weighted: status.weighted_demand.toFixed(1),
+                      })}
+                    </div>`
+                  : nothing
+              }
+              <div class="number-fields">
+                ${numField(
+                  "release_min_demand",
+                  group.release_min_demand ?? 1,
+                  localize("compressor.release_min_demand", l),
+                  localize("compressor.release_min_demand_hint", l),
+                  1,
+                  50,
+                  1,
+                )}
+              </div>
+              <div class="field-row">
+                <ha-formfield .label=${localize("compressor.release_smart", l)}>
+                  <ha-switch
+                    .checked=${group.release_smart ?? false}
+                    @change=${(e: Event) =>
+                      this._updateGroup(
+                        idx,
+                        "release_smart",
+                        (e.target as HTMLInputElement).checked,
+                      )}
+                  ></ha-switch>
+                </ha-formfield>
+                <div class="field-hint">${localize("compressor.release_smart_hint", l)}</div>
+              </div>
+              ${
+                group.release_smart
+                  ? html`<div class="number-fields">
+                      ${numField(
+                        "release_urgent_delta",
+                        group.release_urgent_delta ?? 1.5,
+                        localize("compressor.release_urgent_delta", l),
+                        localize("compressor.release_urgent_delta_hint", l),
+                        0.3,
+                        5,
+                        0.1,
+                        "K",
+                      )}
+                      ${numField(
+                        "release_max_wait_minutes",
+                        group.release_max_wait_minutes ?? 45,
+                        localize("compressor.release_max_wait", l),
+                        localize("compressor.release_max_wait_hint", l),
+                        5,
+                        240,
+                        5,
+                        "min",
+                      )}
+                    </div>`
+                  : nothing
+              }
+            `
+          : nothing
+      }
     `;
   }
 

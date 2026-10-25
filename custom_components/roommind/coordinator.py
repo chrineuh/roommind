@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from datetime import timedelta
 from functools import partial
 from typing import Any
@@ -67,6 +67,7 @@ from .control.residual_heat import mean_rebound
 from .control.solar import compute_q_solar_norm
 from .control.thermal_model import RoomModelManager
 from .managers.ac_coil_dry_manager import AcCoilDryManager, CoilDryRoomResult
+from .managers.boiler_release import BoilerReleaseManager, ReleaseConfig, RoomHeatDemand
 from .managers.compressor_group_manager import (
     CompressorGroupConfig,
     CompressorGroupManager,
@@ -210,6 +211,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._cover_orchestrator = CoverOrchestrator(hass, self._cover_manager, self._model_manager)
         # Compressor group management (min-run / min-off protection)
         self._compressor_manager = CompressorGroupManager()
+        self._release_manager = BoilerReleaseManager()
         # AC evaporator drying (anti-odour): bounded fan run after cooling
         self._coil_dry_manager = AcCoilDryManager(hass)
         # Heat source orchestration state (per room)
@@ -336,6 +338,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Control master devices based on aggregate room demand
         await self._async_control_master_devices(room_states, rooms, settings)
+        await self._async_control_release_entities(room_states, rooms, settings)
         # Against the live config, not this cycle's snapshot: a save during the cycle released
         # a valve the snapshot may just have pinned again
         try:
@@ -2384,7 +2387,17 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         rooms_config: dict[str, dict],
         settings: dict,
     ) -> list[str]:
-        """Collect room modes for rooms containing group member devices.
+        """Collect room modes for rooms containing group member devices."""
+        return [commanded for _, _, commanded in self._iter_member_rooms(members, room_states, rooms_config, settings)]
+
+    def _iter_member_rooms(
+        self,
+        members: list[str],
+        room_states: dict[str, dict],
+        rooms_config: dict[str, dict],
+        settings: dict,
+    ) -> Iterator[tuple[str, dict, str]]:
+        """Yield (area_id, room state, commanded mode) for rooms containing group member devices.
 
         When heat-source orchestration is active for a room, the room is
         only counted if the orchestration decision includes this group's
@@ -2393,9 +2406,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         room with thermostats heats through its TRVs alone (#476).
         """
         if not settings.get("climate_control_active", True):
-            return []
+            return
         member_set = set(members)
-        modes: list[str] = []
         for area_id, room in rooms_config.items():
             if not room.get("climate_control_enabled", True):
                 continue
@@ -2425,8 +2437,110 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             ):
                 continue
 
-            modes.append(commanded)
-        return modes
+            yield area_id, rs, commanded
+
+    def _member_room_count(self, members: list[str], rooms_config: dict[str, dict]) -> int:
+        """Number of controlled rooms that contain a member of the group."""
+        member_set = set(members)
+        return sum(
+            1
+            for room in rooms_config.values()
+            if room.get("climate_control_enabled", True)
+            and not room.get("is_outdoor", False)
+            and {d.get("entity_id", "") for d in room.get("devices", [])} & member_set
+        )
+
+    async def _async_control_release_entities(
+        self,
+        room_states: dict[str, dict],
+        rooms_config: dict[str, dict],
+        settings: dict,
+    ) -> None:
+        """Switch each group's boiler release (input_boolean/switch) from the member rooms' heat demand."""
+        groups = self._compressor_manager.get_groups()
+        self._release_manager.prune({gid for gid, g in groups.items() if g.release_entity})
+        if not settings.get("climate_control_active", True):
+            return
+        for gid, group in groups.items():
+            if not group.release_entity:
+                continue
+            try:
+                ent = self.hass.states.get(group.release_entity)
+                if ent is None or ent.state in ("unavailable", "unknown"):
+                    continue
+                demands: list[RoomHeatDemand] = []
+                for area_id, rs, commanded in self._iter_member_rooms(
+                    group.members, room_states, rooms_config, settings
+                ):
+                    if commanded != MODE_HEATING:
+                        continue
+                    current = rs.get("current_temp")
+                    target = rs.get("heat_target")
+                    if target is None:
+                        target = rs.get("target_temp")
+                    deficit = target - current if current is not None and target is not None else None
+                    demands.append(
+                        RoomHeatDemand(
+                            area_id=area_id,
+                            power=(rs.get("heating_power") or 0) / 100,
+                            deficit=deficit,
+                        )
+                    )
+                # Same startup guard as the master: do not stop the burner before every room reported.
+                if not demands and self._any_member_room_waiting(group.members, rooms_config):
+                    continue
+                cfg = ReleaseConfig(
+                    entity_id=group.release_entity,
+                    min_demand=group.release_min_demand,
+                    smart=group.release_smart,
+                    urgent_delta=group.release_urgent_delta,
+                    max_wait_seconds=group.release_max_wait_seconds,
+                )
+                is_on = ent.state == "on"
+                want = self._release_manager.evaluate(
+                    gid,
+                    cfg,
+                    demands,
+                    self._member_room_count(group.members, rooms_config),
+                    is_on,
+                    group.min_run_seconds,
+                    group.min_off_seconds,
+                )
+                if want != is_on:
+                    domain = group.release_entity.split(".", 1)[0]
+                    await self.hass.services.async_call(
+                        domain,
+                        "turn_on" if want else "turn_off",
+                        {"entity_id": group.release_entity},
+                        blocking=True,
+                        context=make_roommind_context(),
+                    )
+                    rel = self._release_manager.get_state(gid)
+                    _LOGGER.info(
+                        "Release '%s' (group '%s'): %s (%s)",
+                        group.release_entity,
+                        group.name,
+                        "on" if want else "off",
+                        rel.reason if rel else "",
+                    )
+                self._release_manager.confirm(gid, want)
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning("Release control failed for group '%s'", group.name, exc_info=True)
+
+    def get_release_status(self) -> dict[str, dict]:
+        """Release state per group for the panel."""
+        status: dict[str, dict] = {}
+        for gid, group in self._compressor_manager.get_groups().items():
+            st = self._release_manager.get_state(gid)
+            if not group.release_entity or st is None:
+                continue
+            status[gid] = {
+                "on": bool(st.on),
+                "reason": st.reason,
+                "demand_count": st.demand_count,
+                "weighted_demand": st.weighted_demand,
+            }
+        return status
 
     def _waiting_for_first_reading(self, area_id: str) -> bool:
         """True while a room has had no valid reading since startup, within the grace period."""

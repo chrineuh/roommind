@@ -96,3 +96,53 @@ async def test_release_status_reports_boiler_temperature(hass, mock_config_entry
     status = coordinator.get_release_status()["g1"]
     assert status["boiler_temp"] == 52.5
     assert status["reason"] == "residual_heat"
+
+
+def _onoff(state):
+    st = MagicMock()
+    st.state = state
+    st.attributes = {}
+    return st
+
+
+@pytest.mark.asyncio
+async def test_status_reports_burner_pump_dhw_and_creates_sensor(hass, mock_config_entry):
+    _setup(
+        hass,
+        temp="18.0",
+        release_state="off",
+        burner_entity="binary_sensor.burner",
+        pump_entity="switch.pump",
+        dhw_entity="sensor.dhw_power",
+    )
+    base = hass.states.get.side_effect
+    extra = {
+        "binary_sensor.burner": _onoff("on"),
+        "switch.pump": _onoff("off"),
+        "sensor.dhw_power": _onoff("120"),
+    }
+    hass.states.get = MagicMock(side_effect=lambda eid: extra.get(eid) or base(eid))
+    coordinator = _create_coordinator(hass, mock_config_entry)
+    added = []
+    coordinator.async_add_entities = added.extend
+    await coordinator._async_update_data()
+    status = coordinator.get_release_status()["g1"]
+    assert (status["burner_on"], status["pump_on"], status["dhw_on"]) == (True, False, True)
+    assert len(added) == 1
+    sensor = added[0]
+    assert sensor.group_id == "g1"
+    assert sensor.native_value == status["weighted_demand"]
+    assert sensor.extra_state_attributes["reason"] == status["reason"]
+    # Created once
+    await coordinator._async_update_data()
+    assert len(added) == 1
+
+
+@pytest.mark.asyncio
+async def test_reset_boiler_learning(hass, mock_config_entry):
+    _setup(hass, temp="18.0", release_state="off")
+    coordinator = _create_coordinator(hass, mock_config_entry)
+    coordinator._release_manager.load_thermal({"g1": {"heat_rate": 1.0, "cool_rate": 0.1}})
+    coordinator.reset_boiler_learning("g1")
+    assert coordinator._release_manager.get_thermal("g1") is None
+    assert coordinator._release_manager.thermal_dirty is True

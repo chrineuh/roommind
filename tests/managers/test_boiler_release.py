@@ -210,3 +210,15 @@ class TestBoilerDecisions:
         assert mgr2.get_thermal("g").heat_rate == 2.0
         mgr2.prune(set())
         assert mgr2.get_thermal("g") is None
+
+
+def test_hot_water_pauses_learning_and_burner_state_drives_heat_rate():
+    mgr = BoilerReleaseManager()
+    cfg = _cfg(usable_temp=45)
+    # Released, but burner not firing yet: rising temp is not learned as heat-up from the release.
+    mgr.evaluate("g", cfg, [_d()], 1, True, 0, 0, now=0, boiler_temp=30, burner_on=True)
+    mgr.evaluate("g", cfg, [_d()], 1, True, 0, 0, now=60, boiler_temp=31, burner_on=True, dhw_active=True)
+    assert mgr.get_thermal("g").heat_rate is None
+    mgr.evaluate("g", cfg, [_d()], 1, True, 0, 0, now=120, boiler_temp=32, burner_on=True)
+    mgr.evaluate("g", cfg, [_d()], 1, True, 0, 0, now=180, boiler_temp=33.5, burner_on=True)
+    assert mgr.get_thermal("g").heat_rate == 1.5

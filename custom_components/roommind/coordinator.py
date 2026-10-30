@@ -212,6 +212,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Compressor group management (min-run / min-off protection)
         self._compressor_manager = CompressorGroupManager()
         self._release_manager = BoilerReleaseManager()
+        self._heating_sensor_groups: set[str] = set()
         # AC evaporator drying (anti-odour): bounded fan run after cooling
         self._coil_dry_manager = AcCoilDryManager(hass)
         # Heat source orchestration state (per room)
@@ -340,6 +341,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Control master devices based on aggregate room demand
         await self._async_control_master_devices(room_states, rooms, settings)
         await self._async_control_release_entities(room_states, rooms, settings)
+        self._ensure_heating_sensors()
         # Against the live config, not this cycle's snapshot: a save during the cycle released
         # a valve the snapshot may just have pinned again
         try:
@@ -2445,6 +2447,27 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
             yield area_id, rs, commanded
 
+    def _ensure_heating_sensors(self) -> None:
+        """Create the heat demand sensor of every group with a release, so its history is recorded."""
+        add = getattr(self, "async_add_entities", None)
+        if not add:
+            return
+        from .sensor import RoomMindHeatingSensor
+
+        new = [
+            RoomMindHeatingSensor(self, gid, group.name)
+            for gid, group in self._compressor_manager.get_groups().items()
+            if group.release_entity and gid not in self._heating_sensor_groups
+        ]
+        if new:
+            add(new)
+            self._heating_sensor_groups.update(s.group_id for s in new)
+
+    def reset_boiler_learning(self, group_id: str) -> None:
+        """Forget the learned boiler rates of a group (saved with the next cycle)."""
+        self._release_manager.reset_thermal(group_id)
+        self._thermal_save_count = 0
+
     def _member_room_count(self, members: list[str], rooms_config: dict[str, dict]) -> int:
         """Number of controlled rooms that contain a member of the group."""
         member_set = set(members)
@@ -2518,6 +2541,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     group.min_run_seconds,
                     group.min_off_seconds,
                     boiler_temp=boiler_temp,
+                    burner_on=self._entity_is_on(group.burner_entity),
+                    dhw_active=bool(self._entity_is_on(group.dhw_entity)),
                 )
                 if want != is_on:
                     domain = group.release_entity.split(".", 1)[0]
@@ -2540,6 +2565,25 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             except Exception:  # noqa: BLE001
                 _LOGGER.warning("Release control failed for group '%s'", group.name, exc_info=True)
 
+    def _entity_is_on(self, entity_id: str) -> bool | None:
+        """On/off of a burner, pump or hot water entity; None when not configured or unknown.
+
+        Accepts binary sensors, switches and booleans ("on"), climate/water heater
+        style states ("heat", "heating") and numeric sensors (> 0, e.g. power).
+        """
+        if not entity_id:
+            return None
+        st = self.hass.states.get(entity_id)
+        if st is None or st.state in ("unavailable", "unknown", ""):
+            return None
+        value = str(st.state).lower()
+        if value in ("on", "heat", "heating", "true", "running"):
+            return True
+        try:
+            return float(value) > 0
+        except ValueError:
+            return False
+
     def get_release_status(self) -> dict[str, dict]:
         """Release state per group for the panel."""
         status: dict[str, dict] = {}
@@ -2559,6 +2603,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 "cool_rate": round(thermal.cool_rate, 3) if thermal and thermal.cool_rate else None,
                 "lead_minutes": round(st.lead_seconds / 60) if st.lead_seconds else 0,
                 "warm_minutes": round(warm_s / 60) if warm_s is not None else None,
+                "burner_on": self._entity_is_on(group.burner_entity),
+                "pump_on": self._entity_is_on(group.pump_entity),
+                "dhw_on": self._entity_is_on(group.dhw_entity),
             }
         return status
 

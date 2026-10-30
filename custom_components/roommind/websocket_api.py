@@ -708,6 +708,25 @@ async def websocket_get_settings(
 
 @websocket_api.websocket_command(
     {
+        vol.Required("type"): "roommind/heating/reset_learning",
+        vol.Required("group_id"): str,
+    }
+)
+@callback
+def websocket_reset_boiler_learning(
+    hass: HomeAssistant,
+    connection: ActiveConnection,
+    msg: dict,
+) -> None:
+    """Forget the learned heat-up/cool-down rates of a boiler group."""
+    coordinator = _get_coordinator(hass)
+    if coordinator:
+        coordinator.reset_boiler_learning(msg["group_id"])
+    connection.send_result(msg["id"], {})
+
+
+@websocket_api.websocket_command(
+    {
         vol.Required("type"): "roommind/settings/save",
         vol.Optional("outdoor_temp_sensor"): str,
         vol.Optional("outdoor_humidity_sensor"): str,
@@ -791,6 +810,11 @@ async def websocket_get_settings(
                 vol.Optional("boiler_usable_temp", default=DEFAULT_BOILER_USABLE_TEMP): vol.All(
                     vol.Coerce(float), vol.Range(min=20, max=90)
                 ),
+                vol.Optional("burner_entity", default=""): str,
+                vol.Optional("pump_entity", default=""): str,
+                vol.Optional("dhw_entity", default=""): str,
+                vol.Optional("oil_sensor", default=""): str,
+                vol.Optional("oil_nozzle_lph", default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=50)),
             }
         ],
     }
@@ -1104,6 +1128,7 @@ async def websocket_covers_clear_override(
 def async_register_websocket_commands(hass: HomeAssistant) -> None:
     """Register all RoomMind WebSocket commands."""
     websocket_api.async_register_command(hass, websocket_list_rooms)
+    websocket_api.async_register_command(hass, websocket_reset_boiler_learning)
     websocket_api.async_register_command(hass, websocket_save_room)
     websocket_api.async_register_command(hass, websocket_delete_room)
     websocket_api.async_register_command(hass, websocket_override_set)

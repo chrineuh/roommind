@@ -22,6 +22,10 @@ That is used twice:
   and the next cold start is avoided.
 * Smart mode starts a cold boiler earlier by its learned heat-up time, so the
   water is warm when a waiting room reaches the maximum wait.
+
+When a burner entity is known, heat-up is learned from the burner actually
+firing instead of the release. While domestic hot water is being charged the
+boiler temperature says nothing about the heating circuit, so learning pauses.
 """
 
 from __future__ import annotations
@@ -86,8 +90,16 @@ class BoilerThermal:
     last_ts: float | None = None
     last_on: bool | None = None
 
-    def observe(self, temp: float, on: bool, now: float, usable_temp: float) -> bool:
-        """Feed one boiler reading; return True when a learned rate changed."""
+    def observe(self, temp: float, on: bool, now: float, usable_temp: float, paused: bool = False) -> bool:
+        """Feed one boiler reading; return True when a learned rate changed.
+
+        *on* is whether the boiler is heating (burner firing, or released when
+        the burner state is unknown). *paused* drops the reference point, e.g.
+        while hot water is charged.
+        """
+        if paused:
+            self.last_temp = self.last_ts = self.last_on = None
+            return False
         changed = False
         if self.last_temp is not None and self.last_ts is not None and self.last_on == on:
             dt = now - self.last_ts
@@ -204,6 +216,11 @@ class BoilerReleaseManager:
         for gid, d in (data or {}).items():
             self._thermal[gid] = BoilerThermal(heat_rate=d.get("heat_rate"), cool_rate=d.get("cool_rate"))
 
+    def reset_thermal(self, group_id: str) -> None:
+        """Forget what was learned about a group's boiler."""
+        if self._thermal.pop(group_id, None) is not None:
+            self.thermal_dirty = True
+
     def get_thermal_state(self) -> dict:
         return {
             gid: {"heat_rate": t.heat_rate, "cool_rate": t.cool_rate}
@@ -225,6 +242,8 @@ class BoilerReleaseManager:
         min_off_seconds: float,
         now: float | None = None,
         boiler_temp: float | None = None,
+        burner_on: bool | None = None,
+        dhw_active: bool = False,
     ) -> bool:
         """Decide the release for this cycle and return whether it should be on."""
         now = monotonic() if now is None else now
@@ -234,7 +253,8 @@ class BoilerReleaseManager:
             state.on = entity_is_on
 
         thermal = self._thermal.setdefault(group_id, BoilerThermal())
-        if boiler_temp is not None and thermal.observe(boiler_temp, state.on, now, cfg.usable_temp):
+        heating = burner_on if burner_on is not None else state.on
+        if boiler_temp is not None and thermal.observe(boiler_temp, heating, now, cfg.usable_temp, paused=dhw_active):
             self.thermal_dirty = True
         state.boiler_temp = boiler_temp
         state.lead_seconds = thermal.lead_seconds(boiler_temp, cfg.usable_temp)

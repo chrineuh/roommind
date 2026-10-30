@@ -6,6 +6,7 @@ import { loadHaElements } from "./load-ha-elements";
 import { localize } from "./utils/localize";
 import { mdiEyeOff } from "./utils/icons";
 import "./components/rs-settings";
+import "./components/rs-heating";
 import "./components/rs-analytics";
 
 const BACK_PATH = "M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z";
@@ -19,7 +20,7 @@ const CHART_PATH =
 const THERMOMETER_PATH =
   "M15 13V5A3 3 0 0 0 9 5V13A5 5 0 1 0 15 13M12 4A1 1 0 0 1 13 5V8H11V5A1 1 0 0 1 12 4Z";
 
-type TabId = "areas" | "analytics" | "settings";
+type TabId = "areas" | "heating" | "analytics" | "settings";
 
 interface AreaInfo {
   area: HassArea;
@@ -414,6 +415,7 @@ export class RoomMindPanel extends LitElement {
 
     const tabLabels: Record<TabId, string> = {
       areas: localize("panel.tab.rooms", l),
+      heating: localize("panel.tab.heating", l),
       analytics: localize("tabs.analytics", l),
       settings: localize("panel.tab.settings", l),
     };
@@ -494,6 +496,11 @@ export class RoomMindPanel extends LitElement {
           .controlMode=${this._controlMode}
           @room-selected=${this._onAnalyticsRoomSelected}
         ></rs-analytics>`;
+      case "heating":
+        return html`<rs-heating
+          .hass=${this.hass}
+          .releaseStatus=${this._compressorRelease}
+        ></rs-heating>`;
       case "settings":
         return this._renderSettings();
       default:
@@ -1104,6 +1111,9 @@ export class RoomMindPanel extends LitElement {
       this._activeTab = "analytics";
       this._selectedAreaId = null;
       this._analyticsRoom = "";
+    } else if (path === "/heating") {
+      this._activeTab = "heating";
+      this._selectedAreaId = null;
     } else if (path === "/settings") {
       this._activeTab = "settings";
       this._selectedAreaId = null;

@@ -99,3 +99,38 @@ class RoomMindModeSensor(_RoomMindBaseSensor):
             val = room.get("mode", "idle")
             return str(val) if val is not None else "idle"
         return "idle"
+
+
+class RoomMindHeatingSensor(CoordinatorEntity, SensorEntity):
+    """Heat demand of a boiler group (weighted rooms) with the release decision as attributes.
+
+    Its history is what the panel's heating tab shows for the decisions over time.
+    """
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:water-boiler"
+    _attr_state_class = "measurement"
+
+    def __init__(self, coordinator: RoomMindCoordinator, group_id: str, group_name: str = "") -> None:
+        super().__init__(coordinator)
+        self.group_id = group_id
+        self._attr_unique_id = f"{DOMAIN}_heating_{group_id}"
+        self._attr_name = f"RoomMind {group_name or 'boiler'} heat demand"
+        self.entity_id = f"sensor.{DOMAIN}_heating_{group_id.replace('-', '')[:8].lower()}"
+
+    def _status(self) -> dict | None:
+        status: dict | None = self.coordinator.get_release_status().get(self.group_id)
+        return status
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._status() is not None
+
+    @property
+    def native_value(self) -> float | None:
+        status = self._status()
+        return status["weighted_demand"] if status else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return dict(self._status() or {})

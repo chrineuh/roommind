@@ -116,6 +116,13 @@ export interface CompressorGroup {
   /** Boiler water temperature sensor and the temperature from which radiators get warm. */
   boiler_temp_sensor?: string;
   boiler_usable_temp?: number;
+  /** Optional states for the heating tab and learning (burner firing, circuit pump, hot water). */
+  burner_entity?: string;
+  pump_entity?: string;
+  dhw_entity?: string;
+  /** Oil meter (litres) or, without one, the burner nozzle flow to estimate consumption. */
+  oil_sensor?: string;
+  oil_nozzle_lph?: number;
 }
 
 export interface CompressorReleaseStatus {
@@ -129,6 +136,9 @@ export interface CompressorReleaseStatus {
   cool_rate?: number | null;
   lead_minutes?: number;
   warm_minutes?: number | null;
+  burner_on?: boolean | null;
+  pump_on?: boolean | null;
+  dhw_on?: boolean | null;
 }
 
 export interface RoomConfig {

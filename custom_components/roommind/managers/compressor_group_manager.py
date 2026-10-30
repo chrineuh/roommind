@@ -46,6 +46,11 @@ class CompressorGroupConfig:
     release_max_wait_seconds: float = DEFAULT_RELEASE_MAX_WAIT_MINUTES * 60
     boiler_temp_sensor: str = ""
     boiler_usable_temp: float = DEFAULT_BOILER_USABLE_TEMP
+    burner_entity: str = ""
+    pump_entity: str = ""
+    dhw_entity: str = ""
+    oil_sensor: str = ""
+    oil_nozzle_lph: float = 0.0
 
 
 @dataclass
@@ -92,6 +97,11 @@ class CompressorGroupManager:
                 release_max_wait_seconds=g.get("release_max_wait_minutes", DEFAULT_RELEASE_MAX_WAIT_MINUTES) * 60,
                 boiler_temp_sensor=g.get("boiler_temp_sensor", ""),
                 boiler_usable_temp=g.get("boiler_usable_temp", DEFAULT_BOILER_USABLE_TEMP),
+                burner_entity=g.get("burner_entity", ""),
+                pump_entity=g.get("pump_entity", ""),
+                dhw_entity=g.get("dhw_entity", ""),
+                oil_sensor=g.get("oil_sensor", ""),
+                oil_nozzle_lph=g.get("oil_nozzle_lph", 0.0),
             )
             for eid in g.get("members", []):
                 new_entity_map[eid] = gid

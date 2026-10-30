@@ -96,6 +96,12 @@ export class RsSettingsCompressor extends LitElement {
         background: rgba(255, 129, 0, 0.12);
         color: var(--state-climate-heat-color, #ff8100);
       }
+      .heating-link {
+        margin-left: auto;
+        color: var(--primary-color);
+        text-decoration: none;
+        white-space: nowrap;
+      }
       .release-status ha-icon {
         --mdc-icon-size: 18px;
       }
@@ -283,7 +289,7 @@ export class RsSettingsCompressor extends LitElement {
               `
             : nothing
         }
-        ${this._renderRelease(group, idx)}
+        ${this._renderRelease(group)}
 
         <div class="field-row">
           <ha-entity-picker
@@ -315,175 +321,34 @@ export class RsSettingsCompressor extends LitElement {
     `;
   }
 
-  private _renderRelease(group: CompressorGroup, idx: number) {
+  /** Boiler release settings live in the heating tab; show where and whether it is on. */
+  private _renderRelease(group: CompressorGroup) {
     const l = this.hass.language;
     const status = this.releaseStatus[group.id];
-    const numField = (
-      field:
-        | "release_min_demand"
-        | "release_urgent_delta"
-        | "release_max_wait_minutes"
-        | "boiler_usable_temp",
-      value: number,
-      label: string,
-      hint: string,
-      min: number,
-      max: number,
-      step: number,
-      suffix = "",
-    ) => html`
-      <div>
-        <ha-textfield
-          type="number"
-          .value=${String(value)}
-          .label=${label}
-          .suffix=${suffix}
-          min=${min}
-          max=${max}
-          step=${step}
-          @change=${(e: Event) => {
-            const v = Number((e.target as HTMLInputElement).value);
-            if (Number.isFinite(v) && v >= min && v <= max) this._updateGroup(idx, field, v);
-          }}
-        ></ha-textfield>
-        <div class="field-hint">${hint}</div>
-      </div>
-    `;
     return html`
       <div class="section-label">${localize("compressor.release_title", l)}</div>
-      <ha-entity-picker
-        .hass=${this.hass}
-        .value=${group.release_entity || ""}
-        .includeDomains=${["input_boolean", "switch"]}
-        .label=${localize("compressor.release_entity", l)}
-        @value-changed=${(e: CustomEvent) => {
-          this._updateGroup(idx, "release_entity", (e.detail?.value as string) ?? "");
-        }}
-      ></ha-entity-picker>
-      <div class="field-hint">${localize("compressor.release_entity_hint", l)}</div>
-      ${
-        group.release_entity
-          ? html`
-              ${
-                status
-                  ? html`<div class="release-status ${status.on ? "on" : ""}">
-                        <ha-icon icon=${status.on ? "mdi:fire" : "mdi:fire-off"}></ha-icon>
-                        ${localize(status.on ? "compressor.release_on" : "compressor.release_off", l)}
-                        · ${localize(`compressor.release_reason.${status.reason}` as never, l)} ·
-                        ${localize("compressor.release_demand", l, {
-                          count: status.demand_count,
-                          weighted: status.weighted_demand.toFixed(1),
-                        })}
-                      </div>
-                      ${this._renderBoilerStatus(status)}`
-                  : nothing
-              }
-              <div class="number-fields">
-                ${numField(
-                  "release_min_demand",
-                  group.release_min_demand ?? 1,
-                  localize("compressor.release_min_demand", l),
-                  localize("compressor.release_min_demand_hint", l),
-                  1,
-                  50,
-                  1,
-                )}
-              </div>
-              <div class="section-label">${localize("compressor.boiler_title", l)}</div>
-              <ha-entity-picker
-                .hass=${this.hass}
-                .value=${group.boiler_temp_sensor || ""}
-                .includeDomains=${["sensor", "input_number", "number"]}
-                .label=${localize("compressor.boiler_temp_sensor", l)}
-                @value-changed=${(e: CustomEvent) => {
-                  this._updateGroup(idx, "boiler_temp_sensor", (e.detail?.value as string) ?? "");
-                }}
-              ></ha-entity-picker>
-              <div class="field-hint">${localize("compressor.boiler_temp_sensor_hint", l)}</div>
-              ${
-                group.boiler_temp_sensor
-                  ? html`<div class="number-fields">
-                      ${numField(
-                        "boiler_usable_temp",
-                        group.boiler_usable_temp ?? 45,
-                        localize("compressor.boiler_usable_temp", l),
-                        localize("compressor.boiler_usable_temp_hint", l),
-                        20,
-                        90,
-                        1,
-                        "°C",
-                      )}
-                    </div>`
-                  : nothing
-              }
-              <div class="field-row">
-                <ha-formfield .label=${localize("compressor.release_smart", l)}>
-                  <ha-switch
-                    .checked=${group.release_smart ?? false}
-                    @change=${(e: Event) =>
-                      this._updateGroup(
-                        idx,
-                        "release_smart",
-                        (e.target as HTMLInputElement).checked,
-                      )}
-                  ></ha-switch>
-                </ha-formfield>
-                <div class="field-hint">${localize("compressor.release_smart_hint", l)}</div>
-              </div>
-              ${
-                group.release_smart
-                  ? html`<div class="number-fields">
-                      ${numField(
-                        "release_urgent_delta",
-                        group.release_urgent_delta ?? 1.5,
-                        localize("compressor.release_urgent_delta", l),
-                        localize("compressor.release_urgent_delta_hint", l),
-                        0.3,
-                        5,
-                        0.1,
-                        "K",
-                      )}
-                      ${numField(
-                        "release_max_wait_minutes",
-                        group.release_max_wait_minutes ?? 45,
-                        localize("compressor.release_max_wait", l),
-                        localize("compressor.release_max_wait_hint", l),
-                        5,
-                        240,
-                        5,
-                        "min",
-                      )}
-                    </div>`
-                  : nothing
-              }
-            `
-          : nothing
-      }
+      <div class="release-status ${status?.on ? "on" : ""}">
+        <ha-icon
+          icon=${group.release_entity ? "mdi:water-boiler" : "mdi:water-boiler-off"}
+        ></ha-icon>
+        ${
+          group.release_entity
+            ? html`${localize(status?.on ? "compressor.release_on" : "compressor.release_off", l)} ·
+              ${group.release_entity}`
+            : localize("compressor.release_moved", l)
+        }
+        <a class="heating-link" href="/roommind/heating" @click=${this._goHeating}
+          >${localize("compressor.release_open_tab", l)}</a
+        >
+      </div>
     `;
   }
 
-  private _renderBoilerStatus(status: CompressorReleaseStatus) {
-    if (status.boiler_temp === null || status.boiler_temp === undefined) return nothing;
-    const l = this.hass.language;
-    const unknown = localize("compressor.boiler_learning", l);
-    return html`<div class="field-hint boiler-status">
-      ${localize("compressor.boiler_status", l, {
-        temp: status.boiler_temp.toFixed(1),
-        heat: status.heat_rate ? status.heat_rate.toFixed(2) : unknown,
-        cool: status.cool_rate ? status.cool_rate.toFixed(2) : unknown,
-      })}
-      ${
-        status.lead_minutes
-          ? html`· ${localize("compressor.boiler_lead", l, { min: status.lead_minutes })}`
-          : nothing
-      }
-      ${
-        status.warm_minutes
-          ? html`· ${localize("compressor.boiler_warm", l, { min: status.warm_minutes })}`
-          : nothing
-      }
-    </div>`;
-  }
+  private _goHeating = (e: Event) => {
+    e.preventDefault();
+    history.replaceState(null, "", "/roommind/heating");
+    window.dispatchEvent(new Event("location-changed"));
+  };
 
   private _renderMember(entityId: string, groupIdx: number) {
     const state = this.hass.states[entityId];

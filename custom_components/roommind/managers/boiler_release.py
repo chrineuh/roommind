@@ -11,6 +11,17 @@ Smart mode weighs each room by how much heat the room's learned model (MPC)
 asks for, instead of counting a room that wants 5 % the same as one that
 wants 100 %. A room far below its target, or one that has waited too long,
 releases the burner on its own so nobody is left cold.
+
+With a boiler temperature sensor the release also learns how the boiler and
+its heating circuit behave: how fast the water heats up while released and
+how fast it cools down while idle (smoothed per cycle, kept across restarts).
+That is used twice:
+
+* A boiler that is still warm enough to heat the radiators is released for
+  any demand, so the stored heat goes into the rooms instead of being lost
+  and the next cold start is avoided.
+* Smart mode starts a cold boiler earlier by its learned heat-up time, so the
+  water is warm when a waiting room reaches the maximum wait.
 """
 
 from __future__ import annotations
@@ -22,6 +33,14 @@ RELEASE_ENTITY_DOMAINS = ("input_boolean", "switch")
 DEFAULT_RELEASE_MIN_DEMAND = 1
 DEFAULT_RELEASE_URGENT_DELTA = 1.5
 DEFAULT_RELEASE_MAX_WAIT_MINUTES = 45
+DEFAULT_BOILER_USABLE_TEMP = 45.0
+
+# Learning of the boiler's heat-up / cool-down rates (K per minute)
+_RATE_ALPHA = 0.2  # weight of a new observation
+_RATE_MIN_DT_S = 30.0  # shorter steps are mostly sensor noise
+_RATE_MAX_DT_S = 900.0  # longer gaps (restart, outage) say nothing about one step
+_HEAT_LEARN_MARGIN = 15.0  # near its own setpoint the boiler stops rising; that is no heat-up rate
+_MIN_RATE = 0.01
 
 REASON_NO_DEMAND = "no_demand"
 REASON_RUNNING = "running"
@@ -32,6 +51,8 @@ REASON_MAX_WAIT = "max_wait"
 REASON_WAITING = "collecting_demand"
 REASON_MIN_RUN = "min_run"
 REASON_MIN_OFF = "min_off"
+REASON_RESIDUAL_HEAT = "residual_heat"
+REASON_PREHEAT = "preheat"
 
 
 @dataclass
@@ -52,6 +73,52 @@ class ReleaseConfig:
     smart: bool = False
     urgent_delta: float = DEFAULT_RELEASE_URGENT_DELTA
     max_wait_seconds: float = DEFAULT_RELEASE_MAX_WAIT_MINUTES * 60
+    usable_temp: float = DEFAULT_BOILER_USABLE_TEMP
+
+
+@dataclass
+class BoilerThermal:
+    """Learned thermal behaviour of the boiler and its heating circuit."""
+
+    heat_rate: float | None = None  # K/min while released and below the usable range
+    cool_rate: float | None = None  # K/min lost while not released (positive)
+    last_temp: float | None = None
+    last_ts: float | None = None
+    last_on: bool | None = None
+
+    def observe(self, temp: float, on: bool, now: float, usable_temp: float) -> bool:
+        """Feed one boiler reading; return True when a learned rate changed."""
+        changed = False
+        if self.last_temp is not None and self.last_ts is not None and self.last_on == on:
+            dt = now - self.last_ts
+            if _RATE_MIN_DT_S <= dt <= _RATE_MAX_DT_S:
+                rate = (temp - self.last_temp) / (dt / 60)
+                if on and rate > _MIN_RATE and self.last_temp < usable_temp + _HEAT_LEARN_MARGIN:
+                    self.heat_rate = _ema(self.heat_rate, rate)
+                    changed = True
+                elif not on and rate < -_MIN_RATE:
+                    self.cool_rate = _ema(self.cool_rate, -rate)
+                    changed = True
+            elif dt < _RATE_MIN_DT_S:
+                return False  # keep the older reference point for a longer step
+        self.last_temp, self.last_ts, self.last_on = temp, now, on
+        return changed
+
+    def lead_seconds(self, temp: float | None, usable_temp: float) -> float:
+        """Learned time a cold boiler needs to become usable (0 when warm or unknown)."""
+        if temp is None or temp >= usable_temp or not self.heat_rate:
+            return 0.0
+        return (usable_temp - temp) / self.heat_rate * 60
+
+    def warm_seconds(self, temp: float | None, usable_temp: float) -> float | None:
+        """Learned time until a warm idle boiler drops below usable (None when unknown)."""
+        if temp is None or not self.cool_rate:
+            return None
+        return max(0.0, (temp - usable_temp) / self.cool_rate * 60)
+
+
+def _ema(old: float | None, new: float) -> float:
+    return new if old is None else old + _RATE_ALPHA * (new - old)
 
 
 def room_weight(demand: RoomHeatDemand, urgent_delta: float) -> float:
@@ -68,12 +135,17 @@ def decide_release(
     cfg: ReleaseConfig,
     member_room_count: int,
     longest_wait_seconds: float,
+    boiler_temp: float | None = None,
+    lead_seconds: float = 0.0,
 ) -> tuple[bool, str]:
     """Return (release on?, reason) before min-run/min-off are applied."""
     if not demands:
         return False, REASON_NO_DEMAND
     if currently_on:
         return True, REASON_RUNNING
+    # Heat already in the boiler: use it before it is lost through the flue and casing.
+    if boiler_temp is not None and boiler_temp >= cfg.usable_temp:
+        return True, REASON_RESIDUAL_HEAT
     # A threshold above the number of rooms in the group could never be reached.
     needed = max(1, min(cfg.min_demand, max(1, member_room_count)))
     if cfg.smart:
@@ -81,6 +153,9 @@ def decide_release(
             return True, REASON_URGENT
         if longest_wait_seconds >= cfg.max_wait_seconds:
             return True, REASON_MAX_WAIT
+        # Start a cold boiler early enough to be warm when the wait runs out.
+        if lead_seconds > 0 and longest_wait_seconds + lead_seconds >= cfg.max_wait_seconds:
+            return True, REASON_PREHEAT
         if sum(room_weight(d, cfg.urgent_delta) for d in demands) >= needed - 1e-9:
             return True, REASON_WEIGHTED
         return False, REASON_WAITING
@@ -100,6 +175,8 @@ class ReleaseState:
     waiting_since: dict[str, float] = field(default_factory=dict)
     demand_count: int = 0
     weighted_demand: float = 0.0
+    boiler_temp: float | None = None
+    lead_seconds: float = 0.0
 
 
 class BoilerReleaseManager:
@@ -107,11 +184,32 @@ class BoilerReleaseManager:
 
     def __init__(self) -> None:
         self._states: dict[str, ReleaseState] = {}
+        self._thermal: dict[str, BoilerThermal] = {}
+        self.thermal_dirty = False
 
     def prune(self, group_ids: set[str]) -> None:
         for gid in list(self._states):
             if gid not in group_ids:
                 del self._states[gid]
+        for gid in list(self._thermal):
+            if gid not in group_ids:
+                del self._thermal[gid]
+                self.thermal_dirty = True
+
+    def get_thermal(self, group_id: str) -> BoilerThermal | None:
+        return self._thermal.get(group_id)
+
+    def load_thermal(self, data: dict) -> None:
+        """Restore learned rates ({group_id: {heat_rate, cool_rate}})."""
+        for gid, d in (data or {}).items():
+            self._thermal[gid] = BoilerThermal(heat_rate=d.get("heat_rate"), cool_rate=d.get("cool_rate"))
+
+    def get_thermal_state(self) -> dict:
+        return {
+            gid: {"heat_rate": t.heat_rate, "cool_rate": t.cool_rate}
+            for gid, t in self._thermal.items()
+            if t.heat_rate is not None or t.cool_rate is not None
+        }
 
     def get_state(self, group_id: str) -> ReleaseState | None:
         return self._states.get(group_id)
@@ -126,6 +224,7 @@ class BoilerReleaseManager:
         min_run_seconds: float,
         min_off_seconds: float,
         now: float | None = None,
+        boiler_temp: float | None = None,
     ) -> bool:
         """Decide the release for this cycle and return whether it should be on."""
         now = monotonic() if now is None else now
@@ -133,6 +232,12 @@ class BoilerReleaseManager:
         if state.on is None:
             # First cycle (or restart): take over what the entity shows, timers unknown.
             state.on = entity_is_on
+
+        thermal = self._thermal.setdefault(group_id, BoilerThermal())
+        if boiler_temp is not None and thermal.observe(boiler_temp, state.on, now, cfg.usable_temp):
+            self.thermal_dirty = True
+        state.boiler_temp = boiler_temp
+        state.lead_seconds = thermal.lead_seconds(boiler_temp, cfg.usable_temp)
 
         demanding = {d.area_id for d in demands}
         for area_id in list(state.waiting_since):
@@ -146,7 +251,15 @@ class BoilerReleaseManager:
         state.demand_count = len(demands)
         state.weighted_demand = round(sum(room_weight(d, cfg.urgent_delta) for d in demands), 2)
 
-        want, reason = decide_release(demands, state.on, cfg, member_room_count, longest_wait)
+        want, reason = decide_release(
+            demands,
+            state.on,
+            cfg,
+            member_room_count,
+            longest_wait,
+            boiler_temp=boiler_temp,
+            lead_seconds=state.lead_seconds,
+        )
 
         if state.on and not want and state.on_since is not None and now - state.on_since < min_run_seconds:
             want, reason = True, REASON_MIN_RUN

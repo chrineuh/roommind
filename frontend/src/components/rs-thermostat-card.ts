@@ -3,6 +3,11 @@
  * climate entity (climate.roommind_<area>). Turning the dial or picking a
  * mode/preset goes through that entity, so it behaves exactly like the
  * thermostat on a dashboard: a target change is held until the next schedule change.
+ *
+ * Mode and preset buttons are left out: the room view has its own climate
+ * mode and override controls. With `setTemperature` the room view can take
+ * over a target change (e.g. to write it into the schedule) before it would
+ * become a temporary override.
  */
 import { LitElement, html, css, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
@@ -35,6 +40,10 @@ export function findRoomClimateEntity(hass: HomeAssistant, areaId: string): stri
 export class RsThermostatCard extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: String }) public areaId = "";
+  /** Handles a target change from the dial; resolve true when handled, false to fall back to the entity. */
+  @property({ attribute: false }) public setTemperature?: (
+    data: Record<string, unknown>,
+  ) => Promise<boolean>;
 
   @state() private _entityId: string | null = null;
   @state() private _failed = false;
@@ -71,37 +80,58 @@ export class RsThermostatCard extends LitElement {
   protected updated(changed: PropertyValues<this>): void {
     if (!this._entityId) return;
     const st = this.hass.states[this._entityId];
-    // The feature list depends on the modes the entity offers; rebuild only when those change.
-    const hvacModes = (st?.attributes?.hvac_modes as string[] | undefined) ?? [];
-    const presetModes = (st?.attributes?.preset_modes as string[] | undefined) ?? [];
-    const key = `${this._entityId}|${hvacModes.join(",")}|${presetModes.join(",")}`;
-    if (key !== this._cardKey) {
-      this._cardKey = key;
-      void this._createCard(hvacModes, presetModes);
+    if (!st) return;
+    if (this._entityId !== this._cardKey) {
+      this._cardKey = this._entityId;
+      void this._createCard();
     } else if (changed.has("hass") && this._card) {
-      this._card.hass = this.hass;
+      this._card.hass = this._wrapHass();
     }
   }
 
-  private async _createCard(hvacModes: string[], presetModes: string[]) {
+  /**
+   * The card calls hass.callService itself; hand it a hass whose
+   * climate.set_temperature for this entity goes to setTemperature first.
+   */
+  private _wrapHass(): HomeAssistant {
+    const hass = this.hass;
+    const handler = this.setTemperature;
+    if (!handler) return hass;
+    const entityId = this._entityId;
+    const wrapped = Object.create(hass) as HomeAssistant;
+    wrapped.callService = async (domain, service, data, ...rest: unknown[]) => {
+      const target = (data?.entity_id ?? (rest[0] as { entity_id?: unknown })?.entity_id) as
+        string | string[] | undefined;
+      const forUs = target === entityId || (Array.isArray(target) && target.includes(entityId!));
+      if (domain === "climate" && service === "set_temperature" && forUs && data) {
+        try {
+          if (await handler(data)) return;
+        } catch {
+          // fall through to the normal override
+        }
+      }
+      return (hass.callService as (...a: unknown[]) => Promise<void>)(
+        domain,
+        service,
+        data,
+        ...rest,
+      );
+    };
+    return wrapped;
+  }
+
+  private async _createCard() {
     const key = this._cardKey;
-    const features: Record<string, unknown>[] = [];
-    if (hvacModes.length > 1) {
-      features.push({ type: "climate-hvac-modes", hvac_modes: hvacModes });
-    }
-    if (presetModes.length > 0) {
-      features.push({ type: "climate-preset-modes", style: "icons", preset_modes: presetModes });
-    }
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const helpers = await (window as any).loadCardHelpers();
       const card = (await helpers.createCardElement({
         type: "thermostat",
         entity: this._entityId,
-        features,
+        features: [],
       })) as LovelaceCard;
       if (key !== this._cardKey) return; // superseded while loading
-      card.hass = this.hass;
+      card.hass = this._wrapHass();
       this._card = card;
       this._failed = false;
       const host = this.shadowRoot?.querySelector(".card-host");

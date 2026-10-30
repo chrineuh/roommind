@@ -33,6 +33,8 @@ import { fireSaveStatus } from "../utils/events";
 import { resolveHeatingSystemType } from "../utils/device-utils";
 import { DEFAULT_OCCUPANCY_ECO_DELAY } from "../utils/constants";
 import type { RsOverrideSection } from "./rs-override-section";
+import { targetsFromServiceData, writeDayTemperature } from "../utils/schedule-write";
+import { toCelsius } from "../utils/temperature";
 
 const CONTROL_DOCS_URL =
   "https://github.com/snazzybean/roommind/blob/main/docs/control-and-devices.md";
@@ -99,6 +101,7 @@ export class RsRoomDetail extends LitElement {
   @state() private _valveProtectionExclude: Set<string> = new Set();
   @state() private _climateControlEnabled = true;
   @state() private _showThermostat = true;
+  @state() private _thermostatWritesSchedule = true;
   /** Schedule open in the weekly editor: null = closed, "" = new schedule. */
   @state() private _scheduleEditorEntity: string | null = null;
   @state() private _heatSourceOrchestration = false;
@@ -324,6 +327,7 @@ export class RsRoomDetail extends LitElement {
       this._valveProtectionExclude = new Set(this.config.valve_protection_exclude ?? []);
       this._climateControlEnabled = this.config.climate_control_enabled ?? true;
       this._showThermostat = this.config.show_thermostat ?? true;
+      this._thermostatWritesSchedule = this.config.thermostat_writes_schedule ?? true;
       this._heatSourceOrchestration = this.config.heat_source_orchestration ?? false;
       this._heatSourcePrimaryDelta = this.config.heat_source_primary_delta ?? 1.5;
       this._heatSourceOutdoorThreshold = this.config.heat_source_outdoor_threshold ?? 5.0;
@@ -367,6 +371,7 @@ export class RsRoomDetail extends LitElement {
       this._valveProtectionExclude = new Set();
       this._climateControlEnabled = true;
       this._showThermostat = true;
+      this._thermostatWritesSchedule = true;
       this._heatSourceOrchestration = false;
       this._heatSourcePrimaryDelta = 1.5;
       this._heatSourceOutdoorThreshold = 5.0;
@@ -455,7 +460,14 @@ export class RsRoomDetail extends LitElement {
                             <rs-thermostat-card
                               .hass=${this.hass}
                               .areaId=${this.area.area_id}
+                              .setTemperature=${this._onThermostatSetTemperature}
                             ></rs-thermostat-card>
+                            <rs-toggle-row
+                              .label=${localize("thermostat.writes_schedule", this.hass.language)}
+                              .hint=${localize("thermostat.writes_schedule_hint", this.hass.language)}
+                              .checked=${this._thermostatWritesSchedule}
+                              @toggle-changed=${this._onThermostatWritesScheduleToggle}
+                            ></rs-toggle-row>
                           </rs-section-card>
                         `
                       : nothing
@@ -700,6 +712,7 @@ export class RsRoomDetail extends LitElement {
           .entityId=${this._scheduleEditorEntity ?? ""}
           .climateMode=${this._climateMode}
           .defaultName=${this._displayName || this.area.name}
+          .nightTemp=${this._climateMode === "cool_only" ? this._ecoCool : this._ecoHeat}
           @schedule-editor-closed=${this._onScheduleEditorClosed}
           @schedule-saved=${this._onScheduleSaved}
         ></rs-schedule-editor>
@@ -1176,14 +1189,95 @@ export class RsRoomDetail extends LitElement {
     this._scheduleEditorEntity = null;
   };
 
-  private _onScheduleSaved = (e: CustomEvent<{ entityId: string; created: boolean }>) => {
+  private _onScheduleSaved = (
+    e: CustomEvent<{
+      entityId: string;
+      created: boolean;
+      replaces: string | null;
+      nightTemp: number | null;
+    }>,
+  ) => {
     e.stopPropagation();
-    const { entityId, created } = e.detail;
+    const { entityId, created, replaces, nightTemp } = e.detail;
+    let changed = false;
     if (created && entityId && !this._schedules.some((s) => s.entity_id === entityId)) {
-      this._schedules = [...this._schedules, { entity_id: entityId }];
-      this._autoSave();
+      const idx = replaces ? this._schedules.findIndex((s) => s.entity_id === replaces) : -1;
+      // A copied YAML schedule takes the place of its original.
+      this._schedules =
+        idx >= 0
+          ? this._schedules.map((s, i) => (i === idx ? { entity_id: entityId } : s))
+          : [...this._schedules, { entity_id: entityId }];
+      changed = true;
     }
+    if (nightTemp !== null && this._setNightTemp(nightTemp)) changed = true;
+    if (changed) this._autoSave();
   };
+
+  /** Night = what applies outside the schedule blocks, i.e. the room's eco temperature (°C). */
+  private _setNightTemp(celsius: number): boolean {
+    const v = Math.round(celsius * 10) / 10;
+    if (this._climateMode === "cool_only") {
+      if (v === this._ecoCool) return false;
+      this._ecoCool = v;
+    } else {
+      if (v === this._ecoHeat) return false;
+      this._ecoHeat = v;
+      // Keep the auto dead-band valid.
+      if (this._ecoCool < v) this._ecoCool = v;
+    }
+    return true;
+  }
+
+  /**
+   * A target change on the room thermostat becomes the new day temperature of
+   * the active schedule (all blocks, all week) while a block is running, or
+   * the night (eco) temperature outside the blocks. Falls back to the normal
+   * temporary override when there is no schedule that can be changed.
+   */
+  private _onThermostatSetTemperature = async (data: Record<string, unknown>): Promise<boolean> => {
+    if (!this._thermostatWritesSchedule || this._schedules.length === 0) return false;
+    const temps = targetsFromServiceData(data, this._climateMode);
+    if (!temps) return false;
+    const idx = this.config?.live?.active_schedule_index ?? -1;
+    const scheduleId = this._schedules[idx >= 0 ? idx : 0]?.entity_id;
+    const st = scheduleId ? this.hass.states[scheduleId] : undefined;
+    if (!scheduleId || !st) return false;
+
+    if (st.state === "on") {
+      if (!(await writeDayTemperature(this.hass, scheduleId, this._climateMode, temps))) {
+        return false;
+      }
+    } else {
+      const night = this._climateMode === "cool_only" ? temps.cool : temps.heat;
+      if (night === undefined) return false;
+      if (this._setNightTemp(toCelsius(night, this.hass))) {
+        this._autoSave();
+        await this._flushPending();
+      }
+    }
+    const climateEntity = data.entity_id as string;
+    // An override would hide the new schedule temperature; return to the schedule and refresh.
+    if (this.config?.live?.override_active) {
+      await this.hass.callService("climate", "set_preset_mode", {
+        entity_id: climateEntity,
+        preset_mode: "none",
+      });
+    } else {
+      await this.hass.callService("homeassistant", "update_entity", { entity_id: climateEntity });
+    }
+    return true;
+  };
+
+  /** Send a debounced save now and wait until it is stored. */
+  private async _flushPending() {
+    this._flushSave();
+    if (this._saveInFlight) await this._saveInFlight.catch(() => undefined);
+  }
+
+  private _onThermostatWritesScheduleToggle(e: CustomEvent<boolean>) {
+    this._thermostatWritesSchedule = e.detail;
+    this._autoSave();
+  }
 
   private _onShowThermostatToggle(e: CustomEvent<boolean>) {
     this._showThermostat = e.detail;
@@ -1245,6 +1339,7 @@ export class RsRoomDetail extends LitElement {
       covers: [...this._selectedCovers],
       climate_control_enabled: this._climateControlEnabled,
       show_thermostat: this._showThermostat,
+      thermostat_writes_schedule: this._thermostatWritesSchedule,
       covers_auto_enabled: this._coversAutoEnabled,
       covers_deploy_threshold: this._coversDeployThreshold,
       covers_min_position: this._coversMinPosition,

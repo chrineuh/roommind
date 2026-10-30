@@ -81,3 +81,18 @@ async def test_release_unavailable_is_left_alone(hass, mock_config_entry):
     coordinator = _create_coordinator(hass, mock_config_entry)
     await coordinator._async_update_data()
     assert _release_calls(hass) == []
+
+
+@pytest.mark.asyncio
+async def test_release_status_reports_boiler_temperature(hass, mock_config_entry):
+    _setup(hass, temp="18.0", release_state="off", boiler_temp_sensor="sensor.boiler")
+    base = hass.states.get.side_effect
+    boiler = MagicMock()
+    boiler.state = "52.5"
+    boiler.attributes = {"unit_of_measurement": "°C"}
+    hass.states.get = MagicMock(side_effect=lambda eid: boiler if eid == "sensor.boiler" else base(eid))
+    coordinator = _create_coordinator(hass, mock_config_entry)
+    await coordinator._async_update_data()
+    status = coordinator.get_release_status()["g1"]
+    assert status["boiler_temp"] == 52.5
+    assert status["reason"] == "residual_heat"

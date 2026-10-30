@@ -113,6 +113,9 @@ export interface CompressorGroup {
   release_smart?: boolean;
   release_urgent_delta?: number;
   release_max_wait_minutes?: number;
+  /** Boiler water temperature sensor and the temperature from which radiators get warm. */
+  boiler_temp_sensor?: string;
+  boiler_usable_temp?: number;
 }
 
 export interface CompressorReleaseStatus {
@@ -120,6 +123,12 @@ export interface CompressorReleaseStatus {
   reason: string;
   demand_count: number;
   weighted_demand: number;
+  boiler_temp?: number | null;
+  /** Learned K/min while heating up / lost while idle. */
+  heat_rate?: number | null;
+  cool_rate?: number | null;
+  lead_minutes?: number;
+  warm_minutes?: number | null;
 }
 
 export interface RoomConfig {
@@ -168,6 +177,7 @@ export interface RoomConfig {
   cover_min_positions?: Record<string, number>;
   ignore_presence?: boolean;
   show_thermostat?: boolean;
+  thermostat_writes_schedule?: boolean;
   is_outdoor?: boolean;
   valve_protection_exclude?: string[];
   heat_source_orchestration?: boolean;

@@ -301,6 +301,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             self._valve_manager.load_actuation_data(settings.get("valve_last_actuation", {}))
             self._coil_dry_manager.load_state(settings.get("coil_dry_state", {}))
             self._head_offsets.load_state(settings.get("ac_head_offsets", {}))
+            self._release_manager.load_thermal(settings.get("boiler_thermal", {}))
             self._model_loaded = True
 
         # Initialize history store (once)
@@ -460,6 +461,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         if self._head_offsets.dirty and self._thermal_save_count == 0:
             await store.async_save_settings({"ac_head_offsets": self._head_offsets.get_state()})
             self._head_offsets.dirty = False
+
+        # Persist the learned boiler heat-up/cool-down rates (piggyback on thermal save cycle)
+        if self._release_manager.thermal_dirty and self._thermal_save_count == 0:
+            await store.async_save_settings({"boiler_thermal": self._release_manager.get_thermal_state()})
+            self._release_manager.thermal_dirty = False
 
         # Coil dry: drop state for devices no longer configured anywhere
         self._coil_dry_manager.prune(set(build_rooms_devices_map(rooms)))
@@ -2495,7 +2501,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     smart=group.release_smart,
                     urgent_delta=group.release_urgent_delta,
                     max_wait_seconds=group.release_max_wait_seconds,
+                    usable_temp=group.boiler_usable_temp,
                 )
+                boiler_temp = None
+                if group.boiler_temp_sensor:
+                    raw = read_sensor_value(self.hass, group.boiler_temp_sensor, "global", "boiler temperature")
+                    if raw is not None:
+                        boiler_temp = ha_temp_to_celsius(self.hass, raw, entity_id=group.boiler_temp_sensor)
                 is_on = ent.state == "on"
                 want = self._release_manager.evaluate(
                     gid,
@@ -2505,6 +2517,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     is_on,
                     group.min_run_seconds,
                     group.min_off_seconds,
+                    boiler_temp=boiler_temp,
                 )
                 if want != is_on:
                     domain = group.release_entity.split(".", 1)[0]
@@ -2534,11 +2547,18 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             st = self._release_manager.get_state(gid)
             if not group.release_entity or st is None:
                 continue
+            thermal = self._release_manager.get_thermal(gid)
+            warm_s = thermal.warm_seconds(st.boiler_temp, group.boiler_usable_temp) if thermal else None
             status[gid] = {
                 "on": bool(st.on),
                 "reason": st.reason,
                 "demand_count": st.demand_count,
                 "weighted_demand": st.weighted_demand,
+                "boiler_temp": round(st.boiler_temp, 1) if st.boiler_temp is not None else None,
+                "heat_rate": round(thermal.heat_rate, 2) if thermal and thermal.heat_rate else None,
+                "cool_rate": round(thermal.cool_rate, 3) if thermal and thermal.cool_rate else None,
+                "lead_minutes": round(st.lead_seconds / 60) if st.lead_seconds else 0,
+                "warm_minutes": round(warm_s / 60) if warm_s is not None else None,
             }
         return status
 

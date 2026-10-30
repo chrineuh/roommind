@@ -647,5 +647,22 @@
   "compressor.release_reason.max_wait": "une pièce a trop attendu",
   "compressor.release_reason.collecting_demand": "collecte de la demande",
   "compressor.release_reason.min_run": "durée minimale de marche",
-  "compressor.release_reason.min_off": "durée minimale d'arrêt"
+  "compressor.release_reason.min_off": "durée minimale d'arrêt",
+  "thermostat.writes_schedule": "Le thermostat modifie le planning",
+  "thermostat.writes_schedule_hint": "Tourner le cadran pendant un créneau règle la température de jour du planning actif pour toute la semaine ; en dehors, la température de nuit. Désactivé : le changement ne vaut que jusqu'au prochain changement de planning.",
+  "schedule_editor.copy_hint": "Ce planning est défini en YAML et ne peut pas être modifié ici. L'enregistrement le reprend comme nouveau planning modifiable qui le remplace dans cette pièce.",
+  "schedule_editor.day_temp": "Température de jour",
+  "schedule_editor.night_temp": "Température de nuit",
+  "schedule_editor.day_night_hint": "Le jour s'applique dans les créneaux (règle tous les créneaux), la nuit en dehors (température éco de la pièce).",
+  "compressor.boiler_title": "Température chaudière (facultatif)",
+  "compressor.boiler_temp_sensor": "Capteur température chaudière / départ",
+  "compressor.boiler_temp_sensor_hint": "Avec la température de la chaudière, RoomMind apprend sa vitesse de chauffe et de refroidissement. Une chaudière encore chaude est autorisée pour toute pièce afin d'utiliser sa chaleur, et le mode intelligent démarre une chaudière froide plus tôt selon son temps de chauffe.",
+  "compressor.boiler_usable_temp": "Chaudière chaude à partir de",
+  "compressor.boiler_usable_temp_hint": "Température de l'eau à partir de laquelle les radiateurs chauffent utilement.",
+  "compressor.boiler_status": "Chaudière {temp} °C · chauffe {heat} K/min · refroidit {cool} K/min",
+  "compressor.boiler_learning": "apprentissage…",
+  "compressor.boiler_lead": "chaude dans ~{min} min",
+  "compressor.boiler_warm": "reste chaude ~{min} min",
+  "compressor.release_reason.residual_heat": "utilise la chaleur résiduelle",
+  "compressor.release_reason.preheat": "préchauffe la chaudière froide"
 }

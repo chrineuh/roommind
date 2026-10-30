@@ -647,5 +647,22 @@
   "compressor.release_reason.max_wait": "ein Raum hat zu lange gewartet",
   "compressor.release_reason.collecting_demand": "sammelt Bedarf",
   "compressor.release_reason.min_run": "Mindestlaufzeit",
-  "compressor.release_reason.min_off": "Mindestpause"
+  "compressor.release_reason.min_off": "Mindestpause",
+  "thermostat.writes_schedule": "Thermostat ändert den Zeitplan",
+  "thermostat.writes_schedule_hint": "Drehen während eines Zeitblocks setzt die Tagestemperatur im aktiven Zeitplan für die ganze Woche, außerhalb der Blöcke die Nachttemperatur. Aus: Die Änderung gilt nur bis zum nächsten Zeitplanwechsel.",
+  "schedule_editor.copy_hint": "Dieser Zeitplan ist in YAML definiert und kann hier nicht geändert werden. Beim Speichern wird er als neuer, bearbeitbarer Zeitplan übernommen und ersetzt ihn in diesem Raum.",
+  "schedule_editor.day_temp": "Tagestemperatur",
+  "schedule_editor.night_temp": "Nachttemperatur",
+  "schedule_editor.day_night_hint": "Tag gilt innerhalb der Zeitblöcke (setzt alle Blöcke), Nacht außerhalb (Eco-Temperatur des Raums).",
+  "compressor.boiler_title": "Kesseltemperatur (optional)",
+  "compressor.boiler_temp_sensor": "Sensor Kessel-/Vorlauftemperatur",
+  "compressor.boiler_temp_sensor_hint": "Mit der Kesseltemperatur lernt RoomMind, wie schnell der Kessel aufheizt und auskühlt. Ein noch warmer Kessel wird für jeden Raum freigegeben, damit seine Wärme genutzt wird, und die intelligente Freigabe startet einen kalten Kessel um seine Aufheizzeit früher.",
+  "compressor.boiler_usable_temp": "Kessel warm ab",
+  "compressor.boiler_usable_temp_hint": "Wassertemperatur, ab der die Heizkörper nutzbare Wärme abgeben.",
+  "compressor.boiler_status": "Kessel {temp} °C · heizt {heat} K/min · kühlt {cool} K/min",
+  "compressor.boiler_learning": "lernt…",
+  "compressor.boiler_lead": "warm in ~{min} Min.",
+  "compressor.boiler_warm": "bleibt ~{min} Min. warm",
+  "compressor.release_reason.residual_heat": "nutzt Restwärme im Kessel",
+  "compressor.release_reason.preheat": "heizt kalten Kessel vor"
 }

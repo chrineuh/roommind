@@ -647,5 +647,22 @@
   "compressor.release_reason.max_wait": "a room waited too long",
   "compressor.release_reason.collecting_demand": "collecting demand",
   "compressor.release_reason.min_run": "minimum run time",
-  "compressor.release_reason.min_off": "minimum off time"
+  "compressor.release_reason.min_off": "minimum off time",
+  "thermostat.writes_schedule": "Thermostat changes the schedule",
+  "thermostat.writes_schedule_hint": "Turning the dial during a schedule block sets the day temperature of the active schedule for the whole week; outside the blocks it sets the night temperature. Off: the change holds only until the next schedule change.",
+  "schedule_editor.copy_hint": "This schedule is defined in YAML and cannot be changed here. Saving takes it over as a new, editable schedule that replaces it in this room.",
+  "schedule_editor.day_temp": "Day temperature",
+  "schedule_editor.night_temp": "Night temperature",
+  "schedule_editor.day_night_hint": "Day applies inside the time blocks (sets all blocks), night outside them (the room's eco temperature).",
+  "compressor.boiler_title": "Boiler temperature (optional)",
+  "compressor.boiler_temp_sensor": "Boiler / flow temperature sensor",
+  "compressor.boiler_temp_sensor_hint": "With the boiler temperature RoomMind learns how fast the boiler heats up and cools down. A boiler that is still warm is released for any room so its heat is used, and smart mode starts a cold boiler early by its heat-up time.",
+  "compressor.boiler_usable_temp": "Boiler warm from",
+  "compressor.boiler_usable_temp_hint": "Water temperature from which the radiators give off useful heat.",
+  "compressor.boiler_status": "Boiler {temp} °C · heats up {heat} K/min · cools {cool} K/min",
+  "compressor.boiler_learning": "learning…",
+  "compressor.boiler_lead": "warm in ~{min} min",
+  "compressor.boiler_warm": "stays warm ~{min} min",
+  "compressor.release_reason.residual_heat": "using heat still in the boiler",
+  "compressor.release_reason.preheat": "preheating a cold boiler"
 }

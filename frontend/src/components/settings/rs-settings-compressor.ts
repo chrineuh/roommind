@@ -319,7 +319,11 @@ export class RsSettingsCompressor extends LitElement {
     const l = this.hass.language;
     const status = this.releaseStatus[group.id];
     const numField = (
-      field: "release_min_demand" | "release_urgent_delta" | "release_max_wait_minutes",
+      field:
+        | "release_min_demand"
+        | "release_urgent_delta"
+        | "release_max_wait_minutes"
+        | "boiler_usable_temp",
       value: number,
       label: string,
       hint: string,
@@ -363,14 +367,15 @@ export class RsSettingsCompressor extends LitElement {
               ${
                 status
                   ? html`<div class="release-status ${status.on ? "on" : ""}">
-                      <ha-icon icon=${status.on ? "mdi:fire" : "mdi:fire-off"}></ha-icon>
-                      ${localize(status.on ? "compressor.release_on" : "compressor.release_off", l)}
-                      · ${localize(`compressor.release_reason.${status.reason}` as never, l)} ·
-                      ${localize("compressor.release_demand", l, {
-                        count: status.demand_count,
-                        weighted: status.weighted_demand.toFixed(1),
-                      })}
-                    </div>`
+                        <ha-icon icon=${status.on ? "mdi:fire" : "mdi:fire-off"}></ha-icon>
+                        ${localize(status.on ? "compressor.release_on" : "compressor.release_off", l)}
+                        · ${localize(`compressor.release_reason.${status.reason}` as never, l)} ·
+                        ${localize("compressor.release_demand", l, {
+                          count: status.demand_count,
+                          weighted: status.weighted_demand.toFixed(1),
+                        })}
+                      </div>
+                      ${this._renderBoilerStatus(status)}`
                   : nothing
               }
               <div class="number-fields">
@@ -384,6 +389,33 @@ export class RsSettingsCompressor extends LitElement {
                   1,
                 )}
               </div>
+              <div class="section-label">${localize("compressor.boiler_title", l)}</div>
+              <ha-entity-picker
+                .hass=${this.hass}
+                .value=${group.boiler_temp_sensor || ""}
+                .includeDomains=${["sensor", "input_number", "number"]}
+                .label=${localize("compressor.boiler_temp_sensor", l)}
+                @value-changed=${(e: CustomEvent) => {
+                  this._updateGroup(idx, "boiler_temp_sensor", (e.detail?.value as string) ?? "");
+                }}
+              ></ha-entity-picker>
+              <div class="field-hint">${localize("compressor.boiler_temp_sensor_hint", l)}</div>
+              ${
+                group.boiler_temp_sensor
+                  ? html`<div class="number-fields">
+                      ${numField(
+                        "boiler_usable_temp",
+                        group.boiler_usable_temp ?? 45,
+                        localize("compressor.boiler_usable_temp", l),
+                        localize("compressor.boiler_usable_temp_hint", l),
+                        20,
+                        90,
+                        1,
+                        "°C",
+                      )}
+                    </div>`
+                  : nothing
+              }
               <div class="field-row">
                 <ha-formfield .label=${localize("compressor.release_smart", l)}>
                   <ha-switch
@@ -428,6 +460,29 @@ export class RsSettingsCompressor extends LitElement {
           : nothing
       }
     `;
+  }
+
+  private _renderBoilerStatus(status: CompressorReleaseStatus) {
+    if (status.boiler_temp === null || status.boiler_temp === undefined) return nothing;
+    const l = this.hass.language;
+    const unknown = localize("compressor.boiler_learning", l);
+    return html`<div class="field-hint boiler-status">
+      ${localize("compressor.boiler_status", l, {
+        temp: status.boiler_temp.toFixed(1),
+        heat: status.heat_rate ? status.heat_rate.toFixed(2) : unknown,
+        cool: status.cool_rate ? status.cool_rate.toFixed(2) : unknown,
+      })}
+      ${
+        status.lead_minutes
+          ? html`· ${localize("compressor.boiler_lead", l, { min: status.lead_minutes })}`
+          : nothing
+      }
+      ${
+        status.warm_minutes
+          ? html`· ${localize("compressor.boiler_warm", l, { min: status.warm_minutes })}`
+          : nothing
+      }
+    </div>`;
   }
 
   private _renderMember(entityId: string, groupIdx: number) {

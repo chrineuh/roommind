@@ -141,3 +141,72 @@ def test_group_config_loads_release_fields():
     assert g.release_smart is True
     assert g.release_urgent_delta == 2.0
     assert g.release_max_wait_seconds == 1800
+
+
+class TestBoilerThermal:
+    def test_learns_heat_and_cool_rates(self):
+        from custom_components.roommind.managers.boiler_release import BoilerThermal
+
+        t = BoilerThermal()
+        assert t.observe(30.0, True, 0, 45) is False
+        assert t.observe(32.0, True, 60, 45) is True  # 2 K/min
+        assert t.heat_rate == 2.0
+        t.observe(60.0, False, 120, 45)  # state change: new reference only
+        assert t.observe(59.0, False, 240, 45) is True  # 0.5 K/min loss
+        assert t.cool_rate == 0.5
+
+    def test_ignores_short_steps_and_long_gaps(self):
+        from custom_components.roommind.managers.boiler_release import BoilerThermal
+
+        t = BoilerThermal()
+        t.observe(30.0, True, 0, 45)
+        assert t.observe(31.0, True, 10, 45) is False  # too short, keeps reference
+        assert t.observe(32.0, True, 60, 45) is True
+        assert t.heat_rate == 2.0
+        assert t.observe(50.0, True, 2000, 45) is False  # gap too long
+
+    def test_no_heat_rate_near_boiler_setpoint(self):
+        from custom_components.roommind.managers.boiler_release import BoilerThermal
+
+        t = BoilerThermal()
+        t.observe(65.0, True, 0, 45)
+        assert t.observe(66.0, True, 60, 45) is False
+
+    def test_lead_and_warm_time(self):
+        from custom_components.roommind.managers.boiler_release import BoilerThermal
+
+        t = BoilerThermal(heat_rate=1.0, cool_rate=0.25)
+        assert t.lead_seconds(35.0, 45) == 600
+        assert t.lead_seconds(50.0, 45) == 0
+        assert t.warm_seconds(50.0, 45) == 1200
+        assert BoilerThermal().warm_seconds(50.0, 45) is None
+
+
+class TestBoilerDecisions:
+    def test_residual_heat_releases_for_single_room(self):
+        cfg = _cfg(min_demand=3, usable_temp=45)
+        on, reason = decide_release([_d(power=0.1, deficit=0.1)], False, cfg, 3, 0, boiler_temp=55)
+        assert (on, reason) == (True, "residual_heat")
+
+    def test_cold_boiler_waits(self):
+        cfg = _cfg(min_demand=3, usable_temp=45)
+        assert decide_release([_d()], False, cfg, 3, 0, boiler_temp=30)[0] is False
+
+    def test_preheat_starts_early_by_lead_time(self):
+        cfg = _cfg(min_demand=3, smart=True, max_wait_seconds=1800, usable_temp=45)
+        small = [_d(power=0.1, deficit=0.1)]
+        assert decide_release(small, False, cfg, 3, 1000, boiler_temp=30, lead_seconds=600)[0] is False
+        assert decide_release(small, False, cfg, 3, 1200, boiler_temp=30, lead_seconds=600) == (True, "preheat")
+
+    def test_manager_learns_and_persists(self):
+        mgr = BoilerReleaseManager()
+        cfg = _cfg(usable_temp=45)
+        mgr.evaluate("g", cfg, [_d()], 1, True, 0, 0, now=0, boiler_temp=30)
+        mgr.evaluate("g", cfg, [_d()], 1, True, 0, 0, now=60, boiler_temp=32)
+        assert mgr.thermal_dirty is True
+        assert mgr.get_thermal_state() == {"g": {"heat_rate": 2.0, "cool_rate": None}}
+        mgr2 = BoilerReleaseManager()
+        mgr2.load_thermal(mgr.get_thermal_state())
+        assert mgr2.get_thermal("g").heat_rate == 2.0
+        mgr2.prune(set())
+        assert mgr2.get_thermal("g") is None

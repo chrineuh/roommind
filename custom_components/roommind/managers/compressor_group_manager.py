@@ -16,6 +16,7 @@ from ..const import (
     DEFAULT_CONFLICT_RESOLUTION,
 )
 from .boiler_release import (
+    DEFAULT_BOILER_USABLE_TEMP,
     DEFAULT_RELEASE_MAX_WAIT_MINUTES,
     DEFAULT_RELEASE_MIN_DEMAND,
     DEFAULT_RELEASE_URGENT_DELTA,
@@ -43,6 +44,8 @@ class CompressorGroupConfig:
     release_smart: bool = False
     release_urgent_delta: float = DEFAULT_RELEASE_URGENT_DELTA
     release_max_wait_seconds: float = DEFAULT_RELEASE_MAX_WAIT_MINUTES * 60
+    boiler_temp_sensor: str = ""
+    boiler_usable_temp: float = DEFAULT_BOILER_USABLE_TEMP
 
 
 @dataclass
@@ -87,6 +90,8 @@ class CompressorGroupManager:
                 release_smart=g.get("release_smart", False),
                 release_urgent_delta=g.get("release_urgent_delta", DEFAULT_RELEASE_URGENT_DELTA),
                 release_max_wait_seconds=g.get("release_max_wait_minutes", DEFAULT_RELEASE_MAX_WAIT_MINUTES) * 60,
+                boiler_temp_sensor=g.get("boiler_temp_sensor", ""),
+                boiler_usable_temp=g.get("boiler_usable_temp", DEFAULT_BOILER_USABLE_TEMP),
             )
             for eid in g.get("members", []):
                 new_entity_map[eid] = gid

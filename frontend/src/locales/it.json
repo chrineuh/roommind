@@ -647,5 +647,22 @@
   "compressor.release_reason.max_wait": "una stanza ha atteso troppo",
   "compressor.release_reason.collecting_demand": "raccolta richieste",
   "compressor.release_reason.min_run": "tempo minimo di funzionamento",
-  "compressor.release_reason.min_off": "tempo minimo di pausa"
+  "compressor.release_reason.min_off": "tempo minimo di pausa",
+  "thermostat.writes_schedule": "Il termostato modifica il programma",
+  "thermostat.writes_schedule_hint": "Ruotare durante una fascia imposta la temperatura diurna del programma attivo per tutta la settimana; fuori dalle fasce la temperatura notturna. Disattivato: la modifica vale solo fino al prossimo cambio di programma.",
+  "schedule_editor.copy_hint": "Questo programma è definito in YAML e non può essere modificato qui. Salvando viene ripreso come nuovo programma modificabile che lo sostituisce in questa stanza.",
+  "schedule_editor.day_temp": "Temperatura diurna",
+  "schedule_editor.night_temp": "Temperatura notturna",
+  "schedule_editor.day_night_hint": "Il giorno vale nelle fasce (imposta tutte le fasce), la notte fuori (temperatura eco della stanza).",
+  "compressor.boiler_title": "Temperatura caldaia (facoltativo)",
+  "compressor.boiler_temp_sensor": "Sensore temperatura caldaia / mandata",
+  "compressor.boiler_temp_sensor_hint": "Con la temperatura della caldaia RoomMind impara quanto velocemente si scalda e si raffredda. Una caldaia ancora calda viene abilitata per qualsiasi stanza per usarne il calore, e la modalità intelligente avvia prima una caldaia fredda in base al suo tempo di riscaldamento.",
+  "compressor.boiler_usable_temp": "Caldaia calda da",
+  "compressor.boiler_usable_temp_hint": "Temperatura dell'acqua da cui i radiatori cedono calore utile.",
+  "compressor.boiler_status": "Caldaia {temp} °C · scalda {heat} K/min · raffredda {cool} K/min",
+  "compressor.boiler_learning": "in apprendimento…",
+  "compressor.boiler_lead": "calda tra ~{min} min",
+  "compressor.boiler_warm": "resta calda ~{min} min",
+  "compressor.release_reason.residual_heat": "usa il calore residuo",
+  "compressor.release_reason.preheat": "preriscalda la caldaia fredda"
 }

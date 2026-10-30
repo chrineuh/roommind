@@ -28,6 +28,7 @@ from .const import (
 )
 from .control.direct_valve import async_release_valve
 from .managers.boiler_release import (
+    DEFAULT_BOILER_USABLE_TEMP,
     DEFAULT_RELEASE_MAX_WAIT_MINUTES,
     DEFAULT_RELEASE_MIN_DEMAND,
     DEFAULT_RELEASE_URGENT_DELTA,
@@ -160,6 +161,7 @@ _ROOM_SAVE_FIELDS = (
     "valve_protection_exclude",
     "climate_control_enabled",
     "show_thermostat",
+    "thermostat_writes_schedule",
 )
 
 _SETTINGS_SAVE_FIELDS = (
@@ -462,6 +464,7 @@ async def websocket_list_rooms(
         vol.Optional("heat_source_ac_min_outdoor"): vol.All(vol.Coerce(float), vol.Range(min=-30, max=5)),
         vol.Optional("climate_control_enabled"): bool,
         vol.Optional("show_thermostat"): bool,
+        vol.Optional("thermostat_writes_schedule"): bool,
     }
 )
 @websocket_api.async_response
@@ -784,6 +787,10 @@ async def websocket_get_settings(
                 vol.Optional("release_max_wait_minutes", default=DEFAULT_RELEASE_MAX_WAIT_MINUTES): vol.All(
                     vol.Coerce(int), vol.Range(min=5, max=240)
                 ),
+                vol.Optional("boiler_temp_sensor", default=""): str,
+                vol.Optional("boiler_usable_temp", default=DEFAULT_BOILER_USABLE_TEMP): vol.All(
+                    vol.Coerce(float), vol.Range(min=20, max=90)
+                ),
             }
         ],
     }
@@ -864,6 +871,14 @@ async def websocket_save_settings(
                     msg["id"],
                     "invalid_release_entity",
                     f"Release entity '{release}' must be an input_boolean or switch",
+                )
+                return
+            boiler_sensor = g.get("boiler_temp_sensor", "")
+            if boiler_sensor and not boiler_sensor.startswith(("sensor.", "input_number.", "number.")):
+                connection.send_error(
+                    msg["id"],
+                    "invalid_boiler_temp_sensor",
+                    f"Boiler temperature '{boiler_sensor}' must be a sensor",
                 )
                 return
             script = g.get("action_script", "")

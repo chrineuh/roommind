@@ -7,35 +7,27 @@
  * A block can carry a temperature in its data (`temperature`, or
  * `heat_temperature` / `cool_temperature` in auto mode); an empty field
  * means the room's comfort temperature applies.
+ *
+ * A schedule defined in YAML cannot be changed through the UI; it is read
+ * with schedule.get_schedule and saved as an editable copy instead.
+ * The night temperature is the room's eco temperature (what applies outside
+ * the blocks); it is handed back to the room view on save.
  */
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant, ClimateMode } from "../types";
 import { localize } from "../utils/localize";
-import { tempUnit } from "../utils/temperature";
+import { tempUnit, toCelsius, toDisplay } from "../utils/temperature";
+import {
+  WEEKDAYS,
+  getStorageSchedule,
+  readScheduleBlocks,
+  type Weekday,
+  type HaScheduleBlock,
+  type HaScheduleItem,
+} from "../utils/schedule-write";
 import { inputStyles } from "../styles/input-styles";
 import "./shared/rs-edit-dialog";
-
-export const WEEKDAYS = [
-  "monday",
-  "tuesday",
-  "wednesday",
-  "thursday",
-  "friday",
-  "saturday",
-  "sunday",
-] as const;
-type Weekday = (typeof WEEKDAYS)[number];
-
-interface HaScheduleBlock {
-  from: string;
-  to: string;
-  data?: Record<string, unknown>;
-}
-
-type HaScheduleItem = { id: string; name: string; icon?: string } & Partial<
-  Record<Weekday, HaScheduleBlock[]>
->;
 
 /** Editable block: times as "HH:MM" ("24:00" = end of day), temps as text so a field can be empty. */
 export interface EditorBlock {
@@ -128,6 +120,8 @@ export class RsScheduleEditor extends LitElement {
   @property({ type: String }) public climateMode: ClimateMode = "auto";
   /** Suggested name for a new schedule (the room name). */
   @property({ type: String }) public defaultName = "";
+  /** Room temperature outside the blocks (eco) in °C. */
+  @property({ type: Number }) public nightTemp = 17;
 
   @state() private _loading = false;
   @state() private _saving = false;
@@ -137,6 +131,12 @@ export class RsScheduleEditor extends LitElement {
   @state() private _week: Week = emptyWeek();
   @state() private _scheduleId: string | null = null;
   @state() private _day: Weekday = "monday";
+  /** YAML schedule being copied into a new helper. */
+  @state() private _copyFrom: string | null = null;
+  @state() private _icon = "";
+  /** Display-unit text fields; "" = leave blocks/eco as they are. */
+  @state() private _dayTemp = "";
+  @state() private _nightTempText = "";
 
   static styles = [
     inputStyles,
@@ -298,6 +298,39 @@ export class RsScheduleEditor extends LitElement {
         justify-content: flex-end;
         gap: 8px;
       }
+      .copy-banner {
+        padding: 10px 14px;
+        border-radius: 8px;
+        background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.1);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .day-night {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: flex-end;
+      }
+      .day-night label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--secondary-text-color);
+      }
+      .day-night input {
+        font: inherit;
+        font-size: 15px;
+        width: 110px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--divider-color, #ccc);
+        background: var(--card-background-color, transparent);
+        color: var(--primary-text-color);
+      }
+      .day-night .hint {
+        flex-basis: 100%;
+      }
       .empty {
         font-size: 13px;
         color: var(--secondary-text-color);
@@ -317,33 +350,35 @@ export class RsScheduleEditor extends LitElement {
     this._readOnly = false;
     this._day = "monday";
     this._scheduleId = null;
+    this._copyFrom = null;
+    this._icon = "";
+    this._nightTempText = String(Math.round(toDisplay(this.nightTemp, this.hass) * 10) / 10);
     if (!this.entityId) {
       this._name = this.defaultName;
       this._week = emptyWeek();
+      this._dayTemp = "";
       return;
     }
     this._loading = true;
     try {
-      const [entry, items] = await Promise.all([
-        this.hass.callWS<{ unique_id: string; platform: string }>({
-          type: "config/entity_registry/get",
-          entity_id: this.entityId,
-        }),
-        this.hass.callWS<HaScheduleItem[]>({ type: "schedule/list" }),
-      ]);
-      const item = items.find((i) => i.id === entry.unique_id);
-      if (!item) {
-        // Defined in YAML: HA cannot change it through the UI either.
-        this._readOnly = true;
-        this._name = (this.hass.states[this.entityId]?.attributes?.friendly_name as string) ?? "";
-        this._week = emptyWeek();
-        return;
-      }
-      this._scheduleId = item.id;
-      this._name = item.name;
+      const item = await getStorageSchedule(this.hass, this.entityId);
       const week = emptyWeek();
-      for (const d of WEEKDAYS) week[d] = blocksFromHa(item[d]);
+      if (item) {
+        this._scheduleId = item.id;
+        this._name = item.name;
+        this._icon = item.icon ?? "";
+        for (const d of WEEKDAYS) week[d] = blocksFromHa(item[d]);
+      } else {
+        // Defined in YAML: take its blocks over into a new, editable helper.
+        const blocks = await readScheduleBlocks(this.hass, this.entityId);
+        const friendly =
+          (this.hass.states[this.entityId]?.attributes?.friendly_name as string) || this.entityId;
+        this._copyFrom = this.entityId;
+        this._name = `${friendly} (RoomMind)`;
+        for (const d of WEEKDAYS) week[d] = blocksFromHa(blocks[d]);
+      }
       this._week = week;
+      this._dayTemp = this._commonDayTemp(week);
     } catch (err) {
       this._readOnly = true;
       this._error = err instanceof Error ? err.message : String(err);
@@ -380,13 +415,18 @@ export class RsScheduleEditor extends LitElement {
     const blocks = this._week[this._day];
     return html`
       <div class="body">
+        ${
+          this._copyFrom
+            ? html`<div class="copy-banner">${localize("schedule_editor.copy_hint", l)}</div>`
+            : nothing
+        }
         <ha-textfield
           .label=${localize("schedule_editor.name", l)}
           .value=${this._name}
           @input=${(e: Event) => (this._name = (e.target as HTMLInputElement).value)}
         ></ha-textfield>
 
-        ${this._renderPreview(l)}
+        ${this._renderDayNight(l)} ${this._renderPreview(l)}
 
         <div class="day-tabs">
           ${WEEKDAYS.map(
@@ -443,6 +483,55 @@ export class RsScheduleEditor extends LitElement {
         </div>
       </div>
     `;
+  }
+
+  /** The day field holds the side the thermostat sets: heat (auto/heat only) or cool (cool only). */
+  private get _dayField(): "temp" | "heat" {
+    return this.climateMode === "auto" ? "heat" : "temp";
+  }
+
+  private _commonDayTemp(week: Week): string {
+    const values = new Set(WEEKDAYS.flatMap((d) => week[d].map((b) => b[this._dayField])));
+    return values.size === 1 ? [...values][0] : "";
+  }
+
+  private _renderDayNight(l: string) {
+    const unit = tempUnit(this.hass);
+    return html`
+      <div class="day-night">
+        <label
+          >${localize("schedule_editor.day_temp", l)} (${unit})
+          <input
+            type="number"
+            step="0.5"
+            inputmode="decimal"
+            placeholder=${localize("schedule_editor.comfort_placeholder", l)}
+            .value=${this._dayTemp}
+            @change=${(e: Event) => this._setDayTemp((e.target as HTMLInputElement).value)}
+          />
+        </label>
+        <label
+          >${localize("schedule_editor.night_temp", l)} (${unit})
+          <input
+            type="number"
+            step="0.5"
+            inputmode="decimal"
+            .value=${this._nightTempText}
+            @change=${(e: Event) => (this._nightTempText = (e.target as HTMLInputElement).value)}
+          />
+        </label>
+        <div class="hint">${localize("schedule_editor.day_night_hint", l)}</div>
+      </div>
+    `;
+  }
+
+  /** Put the day temperature into every block of the week. */
+  private _setDayTemp(value: string) {
+    this._dayTemp = value;
+    const field = this._dayField;
+    const week = { ...this._week };
+    for (const d of WEEKDAYS) week[d] = week[d].map((b) => ({ ...b, [field]: value }));
+    this._week = week;
   }
 
   private _renderPreview(l: string) {
@@ -590,6 +679,11 @@ export class RsScheduleEditor extends LitElement {
         return;
       }
     }
+    const night = Number(this._nightTempText);
+    if (this._nightTempText !== "" && !Number.isFinite(night)) {
+      this._error = localize("schedule_editor.err_temp", l);
+      return;
+    }
     this._error = "";
     this._saving = true;
     const days = Object.fromEntries(
@@ -598,10 +692,12 @@ export class RsScheduleEditor extends LitElement {
     try {
       let entityId = this.entityId;
       if (this._scheduleId) {
+        // schedule/update replaces the whole item, so the icon goes along.
         await this.hass.callWS({
           type: "schedule/update",
           schedule_id: this._scheduleId,
           name: this._name.trim(),
+          ...(this._icon ? { icon: this._icon } : {}),
           ...days,
         });
       } else {
@@ -615,7 +711,12 @@ export class RsScheduleEditor extends LitElement {
       }
       this.dispatchEvent(
         new CustomEvent("schedule-saved", {
-          detail: { entityId, created: !this._scheduleId },
+          detail: {
+            entityId,
+            created: !this._scheduleId,
+            replaces: this._copyFrom,
+            nightTemp: this._nightTempText !== "" ? toCelsius(night, this.hass) : null,
+          },
           bubbles: true,
           composed: true,
         }),

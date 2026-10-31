@@ -70,7 +70,13 @@ from .control.residual_heat import mean_rebound
 from .control.solar import compute_q_solar_norm
 from .control.thermal_model import RoomModelManager
 from .managers.ac_coil_dry_manager import AcCoilDryManager, CoilDryRoomResult
-from .managers.arrival_predictor import ArrivalPredictor
+from .managers.arrival_predictor import (
+    DEFAULT_NEAR_KM,
+    DEFAULT_TRIP_KM,
+    MAX_GPS_ACCURACY_M,
+    ArrivalPredictor,
+    distance_km,
+)
 from .managers.boiler_release import BoilerReleaseManager, ReleaseConfig, RoomHeatDemand
 from .managers.compressor_group_manager import (
     CompressorGroupConfig,
@@ -220,7 +226,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._arrivals = ArrivalPredictor()
         # Learned arrival per room while everyone is away, and rooms already heating up for it
         self._arrival_ts: dict[str, float] = {}
+        self._arrival_source: dict[str, str] = {}
         self._preheating: set[str] = set()
+        self._trip_rooms: set[str] = set()
         # AC evaporator drying (anti-odour): bounded fan run after cooling
         self._coil_dry_manager = AcCoilDryManager(hass)
         # Heat source orchestration state (per room)
@@ -773,6 +781,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Returns TargetTemps(heat, cool). None values mean "force off".
         occupancy_vacant = is_room_vacant(self.hass, room, time.time())
         self._update_arrival_preheat(area_id, room, settings, schedule_blocks, current_temp)
+        if area_id in self._trip_rooms and settings.get("presence_trip_vacation", True):
+            # Everyone far away: hold the vacation setback instead of the away temperature.
+            trip_heat = settings.get("vacation_temp")
+            if trip_heat is not None:
+                room = {**room, "away_heat": float(trip_heat)}
         targets = self._resolve_target_temps(
             room, settings, schedule_blocks, schedule_entity_id, room_vacant=occupancy_vacant
         )
@@ -1659,7 +1672,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "mpc_active": mpc_active,
             "presence_away": presence_away,
             "predicted_arrival": self._arrival_ts.get(area_id),
+            "arrival_source": self._arrival_source.get(area_id),
             "presence_preheat_active": area_id in self._preheating,
+            "presence_trip": area_id in self._trip_rooms,
             "occupancy_vacant": occupancy_vacant,
             "force_off": force_off,
             "mold_risk_level": mold_risk_level,
@@ -2003,9 +2018,25 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         for room in rooms.values():
             entities.update(room.get("presence_persons", []))
         now = time.time()
+        use_location = bool(settings.get("presence_location", False))
         for eid in entities:
-            self._arrivals.observe(eid, presence_entity_home(self.hass.states.get(eid)), now)
+            state = self.hass.states.get(eid)
+            distance = self._distance_home_km(state) if use_location else None
+            self._arrivals.observe(eid, presence_entity_home(state), now, distance)
         self._arrivals.prune(entities)
+
+    def _distance_home_km(self, state: Any) -> float | None:
+        """Distance of a GPS-tracked person/device to home, None without a usable fix."""
+        if state is None:
+            return None
+        attrs = state.attributes or {}
+        lat, lon = attrs.get("latitude"), attrs.get("longitude")
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            return None
+        accuracy = attrs.get("gps_accuracy")
+        if isinstance(accuracy, (int, float)) and accuracy > MAX_GPS_ACCURACY_M:
+            return None
+        return distance_km(self.hass.config.latitude, self.hass.config.longitude, lat, lon)
 
     def _update_arrival_preheat(
         self,
@@ -2026,17 +2057,30 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         self._preheating.discard(area_id)
         self._arrival_ts.pop(area_id, None)
-        if (
-            not settings.get("presence_preheat", False)
-            or room.get("ignore_presence", False)
-            or not is_presence_away(self.hass, room, settings)
-        ):
+        self._arrival_source.pop(area_id, None)
+        self._trip_rooms.discard(area_id)
+        if room.get("ignore_presence", False) or not is_presence_away(self.hass, room, settings):
+            return
+        persons = self._presence_entities(room, settings)
+        use_location = bool(settings.get("presence_location", False))
+        trip_km = float(settings.get("presence_trip_km", DEFAULT_TRIP_KM))
+        if use_location and self._arrivals.all_on_trip(persons, trip_km):
+            self._trip_rooms.add(area_id)
+        if not settings.get("presence_preheat", False):
             return
         now = time.time()
-        arrival = self._arrivals.predict(self._presence_entities(room, settings), now)
-        if arrival is None:
+        predicted = self._arrivals.predict(
+            persons,
+            now,
+            use_location=use_location,
+            near_km=float(settings.get("presence_near_km", DEFAULT_NEAR_KM)),
+            trip_km=trip_km,
+        )
+        if predicted is None:
             return
+        arrival, source = predicted
         self._arrival_ts[area_id] = arrival
+        self._arrival_source[area_id] = source
         target = make_target_resolver(schedule_blocks, room, settings, hass=self.hass)(arrival).heat
         lead = self._heat_up_seconds(area_id, current_temp, target, settings)
         if arrival - now <= lead:

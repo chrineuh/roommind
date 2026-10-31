@@ -36,6 +36,9 @@ export interface RoomLiveData {
   /** Learned arrival while everyone is away (epoch s), and whether the room heats up for it. */
   predicted_arrival?: number | null;
   presence_preheat_active?: boolean;
+  arrival_source?: "learned" | "location" | null;
+  /** Everyone of the room is farther away than the trip distance. */
+  presence_trip?: boolean;
   override_type: OverrideType | null;
   override_heat: number | null;
   override_cool: number | null;
@@ -224,6 +227,10 @@ export interface GlobalSettings {
   presence_clears_override?: boolean;
   presence_preheat?: boolean;
   presence_preheat_minutes?: number;
+  presence_location?: boolean;
+  presence_near_km?: number;
+  presence_trip_km?: number;
+  presence_trip_vacation?: boolean;
   schedule_off_action?: "eco" | "off";
   valve_protection_enabled?: boolean;
   valve_protection_interval_days?: number;

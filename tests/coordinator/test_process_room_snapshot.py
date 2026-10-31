@@ -57,6 +57,8 @@ NORMAL_ROOM_KEYS = {
     "presence_away",
     "predicted_arrival",
     "presence_preheat_active",
+    "arrival_source",
+    "presence_trip",
     "occupancy_vacant",
     "force_off",
     "mold_risk_level",

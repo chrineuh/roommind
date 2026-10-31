@@ -3235,3 +3235,27 @@ async def test_list_rooms_forwards_occupancy_vacant(ws_hass, store, connection):
 
     rooms = connection.send_result.call_args[0][1]["rooms"]
     assert rooms["office"]["live"]["occupancy_vacant"] is True
+
+
+@pytest.mark.asyncio
+async def test_save_settings_presence_location_fields(ws_hass, store, connection):
+    """Arrival pre-heating and location settings are stored."""
+    await store.async_load()
+    msg = {
+        "id": 90,
+        "type": "roommind/settings/save",
+        "presence_preheat": True,
+        "presence_preheat_minutes": 45,
+        "presence_location": True,
+        "presence_near_km": 1.5,
+        "presence_trip_km": 150,
+        "presence_trip_vacation": False,
+    }
+    await _save_settings(ws_hass, connection, msg)
+    connection.send_error.assert_not_called()
+    settings = store.get_settings()
+    assert settings["presence_location"] is True
+    assert settings["presence_near_km"] == 1.5
+    assert settings["presence_trip_km"] == 150
+    assert settings["presence_trip_vacation"] is False
+    assert settings["presence_preheat_minutes"] == 45

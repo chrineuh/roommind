@@ -14,6 +14,9 @@ interface ArrivalSummary {
   typical: Record<string, string>;
   home: boolean | null;
   next: number | null;
+  distance_km?: number | null;
+  approach_kmh?: number | null;
+  eta?: number | null;
 }
 
 @customElement("rs-settings-presence")
@@ -25,6 +28,10 @@ export class RsSettingsPresence extends RsSettingsBase {
   @property({ type: Boolean }) public presenceClearsOverride = false;
   @property({ type: Boolean }) public presencePreheat = false;
   @property({ type: Number }) public presencePreheatMinutes = 60;
+  @property({ type: Boolean }) public presenceLocation = false;
+  @property({ type: Number }) public presenceNearKm = 1;
+  @property({ type: Number }) public presenceTripKm = 100;
+  @property({ type: Boolean }) public presenceTripVacation = true;
 
   @state() private _arrivals: Record<string, ArrivalSummary> = {};
 
@@ -42,6 +49,110 @@ export class RsSettingsPresence extends RsSettingsBase {
     } catch {
       this._arrivals = {};
     }
+  }
+
+  private _renderLocation() {
+    const l = this.hass.language;
+    const time = (ts: number) =>
+      new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const num = (
+      key: "presenceNearKm" | "presenceTripKm",
+      value: number,
+      label: string,
+      hint: string,
+      min: number,
+      max: number,
+      step: number,
+    ) => html`
+      <ha-textfield
+        type="number"
+        .value=${String(value)}
+        .label=${label}
+        .suffix=${"km"}
+        min=${min}
+        max=${max}
+        step=${step}
+        @change=${(e: Event) => {
+          const v = Number((e.target as HTMLInputElement).value);
+          if (Number.isFinite(v) && v >= min && v <= max) this._fire(key, v);
+        }}
+      ></ha-textfield>
+      <span class="field-hint">${hint}</span>
+    `;
+    return html`
+      <div class="toggle-row">
+        <div class="toggle-text">
+          <span class="toggle-label">${localize("presence.location_label", l)}</span>
+          <span class="toggle-hint">${localize("presence.location_hint", l)}</span>
+        </div>
+        <ha-switch
+          .checked=${this.presenceLocation}
+          @change=${(e: Event) =>
+            this._fire("presenceLocation", (e.target as HTMLInputElement).checked)}
+        ></ha-switch>
+      </div>
+      ${
+        this.presenceLocation
+          ? html`
+              ${num(
+                "presenceNearKm",
+                this.presenceNearKm,
+                localize("presence.near_km", l),
+                localize("presence.near_km_hint", l),
+                0.1,
+                20,
+                0.1,
+              )}
+              ${num(
+                "presenceTripKm",
+                this.presenceTripKm,
+                localize("presence.trip_km", l),
+                localize("presence.trip_km_hint", l),
+                10,
+                2000,
+                10,
+              )}
+              <div class="toggle-row">
+                <div class="toggle-text">
+                  <span class="toggle-label">${localize("presence.trip_vacation_label", l)}</span>
+                  <span class="toggle-hint">${localize("presence.trip_vacation_hint", l)}</span>
+                </div>
+                <ha-switch
+                  .checked=${this.presenceTripVacation}
+                  @change=${(e: Event) =>
+                    this._fire("presenceTripVacation", (e.target as HTMLInputElement).checked)}
+                ></ha-switch>
+              </div>
+              <div class="locations">
+                ${this.presencePersons.map((pid) => {
+                  const a = this._arrivals[pid];
+                  const name =
+                    (this.hass.states[pid]?.attributes?.friendly_name as string) ??
+                    pid.split(".").slice(1).join(".");
+                  let status: string;
+                  if (a?.home) status = localize("presence.loc_home", l);
+                  else if (a?.distance_km == null) status = localize("presence.loc_unknown", l);
+                  else if (a.distance_km > this.presenceTripKm)
+                    status = localize("presence.loc_trip", l, { km: a.distance_km });
+                  else if (a.eta)
+                    status = localize("presence.loc_coming", l, {
+                      km: a.distance_km,
+                      time: time(a.eta),
+                    });
+                  else status = localize("presence.loc_away", l, { km: a.distance_km });
+                  return html`<div class="person-row">
+                    <ha-icon
+                      icon="mdi:map-marker-account"
+                      style="--mdc-icon-size: 18px; color: var(--secondary-text-color)"
+                    ></ha-icon>
+                    <span class="person-name">${name}<small>${status}</small></span>
+                  </div>`;
+                })}
+              </div>
+            `
+          : nothing
+      }
+    `;
   }
 
   private _renderPreheat() {
@@ -225,7 +336,7 @@ export class RsSettingsPresence extends RsSettingsBase {
                       this._fire("presenceClearsOverride", (e.target as HTMLInputElement).checked)}
                   ></ha-switch>
                 </div>
-                ${this._renderPreheat()}
+                ${this._renderPreheat()} ${this._renderLocation()}
               </div>
             `
           : nothing

@@ -741,5 +741,20 @@
   "presence.learned_title": "Orari di rientro appresi",
   "presence.learned_count": "{count} rientri",
   "presence.learned_next": "previsto oggi ~{time}",
-  "presence.learned_hint": "Rientro tipico per giorno (mediana delle ultime 8 settimane). Una previsione richiede rientri in almeno 3 giorni diversi; assenze sotto i 20 minuti sono ignorate."
+  "presence.learned_hint": "Rientro tipico per giorno (mediana delle ultime 8 settimane). Una previsione richiede rientri in almeno 3 giorni diversi; assenze sotto i 20 minuti sono ignorate.",
+  "quick.arrival_by_location": "posizione",
+  "quick.trip": "Tutti sono lontani – viaggio rilevato, temperatura vacanza",
+  "presence.location_label": "Usa la posizione",
+  "presence.location_hint": "Usa la posizione GPS di persone e tracker (es. app companion). Chi sta tornando è atteso a distanza ÷ velocità e la stanza preriscalda in tempo; chi è molto lontano è in viaggio.",
+  "presence.near_km": "Quasi a casa entro",
+  "presence.near_km_hint": "Più vicino di così conta come arrivo imminente.",
+  "presence.trip_km": "Viaggio da",
+  "presence.trip_km_hint": "Oltre è un viaggio: l'orario di rientro abituale è ignorato finché non si torna, e i viaggi non vengono appresi.",
+  "presence.trip_vacation_label": "Temperatura vacanza in viaggio",
+  "presence.trip_vacation_hint": "Quando tutti gli occupanti sono in viaggio, la stanza mantiene la temperatura vacanza (Impostazioni → Modalità vacanza) invece di quella di assenza.",
+  "presence.loc_home": "a casa",
+  "presence.loc_unknown": "nessuna posizione GPS",
+  "presence.loc_trip": "a {km} km – viaggio",
+  "presence.loc_coming": "a {km} km – sta tornando, ~{time}",
+  "presence.loc_away": "a {km} km"
 }

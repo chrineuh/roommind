@@ -60,6 +60,10 @@ export class RsSettings extends LitElement {
   @state() private _presenceClearsOverride = false;
   @state() private _presencePreheat = false;
   @state() private _presencePreheatMinutes = 60;
+  @state() private _presenceLocation = false;
+  @state() private _presenceNearKm = 1;
+  @state() private _presenceTripKm = 100;
+  @state() private _presenceTripVacation = true;
   @state() private _scheduleOffAction: "eco" | "off" = "eco";
   @state() private _valveProtectionEnabled = false;
   @state() private _valveProtectionInterval = 7;
@@ -134,6 +138,10 @@ export class RsSettings extends LitElement {
       this._presenceClearsOverride = s.presence_clears_override ?? false;
       this._presencePreheat = s.presence_preheat ?? false;
       this._presencePreheatMinutes = s.presence_preheat_minutes ?? 60;
+      this._presenceLocation = s.presence_location ?? false;
+      this._presenceNearKm = s.presence_near_km ?? 1;
+      this._presenceTripKm = s.presence_trip_km ?? 100;
+      this._presenceTripVacation = s.presence_trip_vacation ?? true;
       this._scheduleOffAction = s.schedule_off_action ?? "eco";
       this._valveProtectionEnabled = s.valve_protection_enabled ?? false;
       this._valveProtectionInterval = s.valve_protection_interval_days ?? 7;
@@ -229,6 +237,10 @@ export class RsSettings extends LitElement {
           .presenceClearsOverride=${this._presenceClearsOverride}
           .presencePreheat=${this._presencePreheat}
           .presencePreheatMinutes=${this._presencePreheatMinutes}
+          .presenceLocation=${this._presenceLocation}
+          .presenceNearKm=${this._presenceNearKm}
+          .presenceTripKm=${this._presenceTripKm}
+          .presenceTripVacation=${this._presenceTripVacation}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-presence>
       </rs-settings-panel>
@@ -438,6 +450,10 @@ export class RsSettings extends LitElement {
       presence_clears_override: this._presenceClearsOverride,
       presence_preheat: this._presencePreheat,
       presence_preheat_minutes: this._presencePreheatMinutes,
+      presence_location: this._presenceLocation,
+      presence_near_km: this._presenceNearKm,
+      presence_trip_km: this._presenceTripKm,
+      presence_trip_vacation: this._presenceTripVacation,
       schedule_off_action: this._scheduleOffAction,
       valve_protection_enabled: this._valveProtectionEnabled,
       valve_protection_interval_days: this._valveProtectionInterval,

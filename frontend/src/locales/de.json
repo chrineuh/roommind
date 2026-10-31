@@ -741,5 +741,20 @@
   "presence.learned_title": "Gelernte Heimkehrzeiten",
   "presence.learned_count": "{count} Heimkehren",
   "presence.learned_next": "heute erwartet ~{time}",
-  "presence.learned_hint": "Typische Heimkehr pro Wochentag (Median der letzten 8 Wochen). Eine Vorhersage braucht Heimkehren an mindestens 3 verschiedenen Tagen; Abwesenheiten unter 20 Minuten zählen nicht."
+  "presence.learned_hint": "Typische Heimkehr pro Wochentag (Median der letzten 8 Wochen). Eine Vorhersage braucht Heimkehren an mindestens 3 verschiedenen Tagen; Abwesenheiten unter 20 Minuten zählen nicht.",
+  "quick.arrival_by_location": "Ortung",
+  "quick.trip": "Alle sind weit weg – Reise erkannt, Urlaubstemperatur",
+  "presence.location_label": "Ortung nutzen",
+  "presence.location_hint": "Nutzt die GPS-Position von Personen und Gerätetrackern (z. B. Companion-App). Wer auf dem Heimweg ist, wird nach Entfernung ÷ Geschwindigkeit erwartet und der Raum heizt rechtzeitig vor; wer sehr weit weg ist, ist auf Reisen.",
+  "presence.near_km": "Fast zuhause ab",
+  "presence.near_km_hint": "Näher als das gilt als „kommt gleich“.",
+  "presence.trip_km": "Reise ab",
+  "presence.trip_km_hint": "Weiter weg gilt als Reise: Die übliche Heimkehrzeit wird ignoriert, bis die Person zurückfährt, und Reisen werden nicht als Heimkehrzeit gelernt.",
+  "presence.trip_vacation_label": "Urlaubstemperatur auf Reisen",
+  "presence.trip_vacation_hint": "Sind alle eines Raums auf Reisen, hält der Raum die Urlaubstemperatur (Einstellungen → Urlaubsmodus) statt seiner Abwesend-Temperatur.",
+  "presence.loc_home": "zuhause",
+  "presence.loc_unknown": "keine GPS-Position",
+  "presence.loc_trip": "{km} km entfernt – Reise",
+  "presence.loc_coming": "{km} km entfernt – auf dem Heimweg, ~{time}",
+  "presence.loc_away": "{km} km entfernt"
 }

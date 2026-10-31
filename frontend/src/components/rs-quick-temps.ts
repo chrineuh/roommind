@@ -29,6 +29,8 @@ export class RsQuickTemps extends LitElement {
   @property({ type: Boolean }) public presenceEnabled = false;
   @property({ attribute: false }) public predictedArrival: number | null = null;
   @property({ type: Boolean }) public preheatActive = false;
+  @property({ attribute: false }) public arrivalSource: string | null = null;
+  @property({ type: Boolean }) public onTrip = false;
 
   /** Common block temperature of the active schedule in °C, null when blocks differ or carry none. */
   @state() private _scheduleDay: number | null = null;
@@ -176,10 +178,24 @@ export class RsQuickTemps extends LitElement {
             ${
               arrival
                 ? html`<div class="arrival ${this.preheatActive ? "active" : ""}">
-                    <ha-icon icon="mdi:home-clock-outline"></ha-icon>
+                    <ha-icon
+                      .icon=${this.arrivalSource === "location" ? "mdi:map-marker-radius" : "mdi:home-clock-outline"}
+                    ></ha-icon>
                     ${localize(this.preheatActive ? "quick.arrival_heating" : "quick.arrival", l, {
                       time: arrival,
                     })}
+                    ${
+                      this.arrivalSource === "location"
+                        ? html`(${localize("quick.arrival_by_location", l)})`
+                        : nothing
+                    }
+                  </div>`
+                : nothing
+            }
+            ${
+              this.onTrip
+                ? html`<div class="arrival">
+                    <ha-icon icon="mdi:airplane"></ha-icon>${localize("quick.trip", l)}
                   </div>`
                 : nothing
             }`

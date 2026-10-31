@@ -741,5 +741,20 @@
   "presence.learned_title": "Heures de retour apprises",
   "presence.learned_count": "{count} retours",
   "presence.learned_next": "attendu aujourd'hui ~{time}",
-  "presence.learned_hint": "Retour typique par jour (médiane des 8 dernières semaines). Une prévision nécessite des retours sur au moins 3 jours différents ; les absences de moins de 20 minutes sont ignorées."
+  "presence.learned_hint": "Retour typique par jour (médiane des 8 dernières semaines). Une prévision nécessite des retours sur au moins 3 jours différents ; les absences de moins de 20 minutes sont ignorées.",
+  "quick.arrival_by_location": "localisation",
+  "quick.trip": "Tout le monde est loin – voyage détecté, température vacances",
+  "presence.location_label": "Utiliser la localisation",
+  "presence.location_hint": "Utilise la position GPS des personnes et traceurs (ex. application compagnon). Une personne sur le retour est attendue selon distance ÷ vitesse et la pièce préchauffe à temps ; une personne très éloignée est en voyage.",
+  "presence.near_km": "Presque à la maison à",
+  "presence.near_km_hint": "Plus proche que cela compte comme arrivée imminente.",
+  "presence.trip_km": "Voyage à partir de",
+  "presence.trip_km_hint": "Au-delà, c'est un voyage : l'heure de retour habituelle est ignorée jusqu'au trajet retour, et les voyages ne sont pas appris.",
+  "presence.trip_vacation_label": "Température vacances en voyage",
+  "presence.trip_vacation_hint": "Quand tous les occupants d'une pièce voyagent, elle garde la température vacances (Paramètres → Mode vacances) au lieu de la température d'absence.",
+  "presence.loc_home": "à la maison",
+  "presence.loc_unknown": "pas de position GPS",
+  "presence.loc_trip": "à {km} km – voyage",
+  "presence.loc_coming": "à {km} km – sur le retour, ~{time}",
+  "presence.loc_away": "à {km} km"
 }

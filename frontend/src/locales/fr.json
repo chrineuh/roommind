@@ -756,5 +756,11 @@
   "presence.loc_unknown": "pas de position GPS",
   "presence.loc_trip": "à {km} km – voyage",
   "presence.loc_coming": "à {km} km – sur le retour, ~{time}",
-  "presence.loc_away": "à {km} km"
+  "presence.loc_away": "à {km} km",
+  "presence.zone_home": "Maison",
+  "presence.zone_remove": "Retirer la zone",
+  "presence.zone_add": "Compte aussi comme maison (zone)",
+  "presence.assignment_title": "Qui compte pour quelle pièce",
+  "presence.assignment_hint": "Une pièce n'est considérée vide (et ne préchauffe pour un retour) que pour les personnes cochées, ex. la chambre d'un enfant pour l'enfant seul. Tout coché = tout le monde.",
+  "presence.assignment_ignored": "ignore la présence"
 }

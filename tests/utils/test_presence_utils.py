@@ -320,3 +320,56 @@ def test_unavailable_entity_still_wins_over_a_deleted_one(monkeypatch):
     settings = {"presence_enabled": True, "presence_persons": ["person.kevin"]}
     room = {"presence_persons": ["device_tracker.gone", "person.kevin"]}
     assert is_presence_away(hass, room, settings) is False
+
+
+# ── extra home zones per person ─────────────────────────────────────
+
+
+def _zone(name: str, friendly: str) -> MagicMock:
+    z = MagicMock()
+    z.entity_id = name
+    z.state = "0"
+    z.attributes = {"friendly_name": friendly}
+    return z
+
+
+def _zone_hass(states: dict) -> MagicMock:
+    hass = _make_hass()
+    hass.states.get = states.get
+    return hass
+
+
+def test_person_in_extra_home_zone_counts_as_home():
+    states = {
+        "person.chris": _make_state("person.chris", "Ferienwohnung"),
+        "zone.ferienwohnung": _zone("zone.ferienwohnung", "Ferienwohnung"),
+    }
+    settings = {
+        "presence_enabled": True,
+        "presence_persons": ["person.chris"],
+        "presence_home_zones": {"person.chris": ["zone.ferienwohnung"]},
+    }
+    assert is_presence_away(_zone_hass(states), {}, settings) is False
+
+
+def test_extra_zone_is_per_person():
+    states = {
+        "person.chris": _make_state("person.chris", "Ferienwohnung"),
+        "zone.ferienwohnung": _zone("zone.ferienwohnung", "Ferienwohnung"),
+    }
+    settings = {
+        "presence_enabled": True,
+        "presence_persons": ["person.chris"],
+        "presence_home_zones": {"person.anna": ["zone.ferienwohnung"]},
+    }
+    assert is_presence_away(_zone_hass(states), {}, settings) is True
+
+
+def test_zone_matched_by_object_id_when_zone_state_missing():
+    from custom_components.roommind.utils.presence_utils import presence_entity_home
+
+    state = _make_state("person.chris", "garten")
+    assert presence_entity_home(state, {"garten"}) is True
+    assert presence_entity_home(state, set()) is False
+    assert presence_entity_home(None) is None
+    assert presence_entity_home(_make_state("binary_sensor.x", "on"), {"garten"}) is True

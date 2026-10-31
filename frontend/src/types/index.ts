@@ -231,6 +231,7 @@ export interface GlobalSettings {
   presence_near_km?: number;
   presence_trip_km?: number;
   presence_trip_vacation?: boolean;
+  presence_home_zones?: Record<string, string[]>;
   schedule_off_action?: "eco" | "off";
   valve_protection_enabled?: boolean;
   valve_protection_interval_days?: number;

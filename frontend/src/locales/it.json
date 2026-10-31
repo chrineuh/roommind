@@ -756,5 +756,11 @@
   "presence.loc_unknown": "nessuna posizione GPS",
   "presence.loc_trip": "a {km} km – viaggio",
   "presence.loc_coming": "a {km} km – sta tornando, ~{time}",
-  "presence.loc_away": "a {km} km"
+  "presence.loc_away": "a {km} km",
+  "presence.zone_home": "Casa",
+  "presence.zone_remove": "Rimuovi zona",
+  "presence.zone_add": "Conta anche come casa (zona)",
+  "presence.assignment_title": "Chi conta per quale stanza",
+  "presence.assignment_hint": "Una stanza è vuota (e preriscalda per un rientro) solo per le persone spuntate, es. la cameretta solo per il bambino. Tutti spuntati = tutti.",
+  "presence.assignment_ignored": "ignora la presenza"
 }

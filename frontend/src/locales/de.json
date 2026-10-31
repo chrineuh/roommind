@@ -756,5 +756,11 @@
   "presence.loc_unknown": "keine GPS-Position",
   "presence.loc_trip": "{km} km entfernt – Reise",
   "presence.loc_coming": "{km} km entfernt – auf dem Heimweg, ~{time}",
-  "presence.loc_away": "{km} km entfernt"
+  "presence.loc_away": "{km} km entfernt",
+  "presence.zone_home": "Zuhause",
+  "presence.zone_remove": "Zone entfernen",
+  "presence.zone_add": "Zählt auch als zuhause (Zone)",
+  "presence.assignment_title": "Wer zählt für welchen Raum",
+  "presence.assignment_hint": "Ein Raum gilt nur für die hier angehakten Personen als „alle weg“ und heizt nur für deren Heimkehr vor, z. B. ein Kinderzimmer nur fürs Kind. Alle angehakt = alle Personen.",
+  "presence.assignment_ignored": "ignoriert Anwesenheit"
 }

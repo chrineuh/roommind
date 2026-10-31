@@ -43,9 +43,27 @@ def is_presence_away(hass: HomeAssistant, room: dict, settings: dict) -> bool:
         if state.state in ("unavailable", "unknown"):
             return False  # fail-safe: treat as home
         evaluated += 1
-        if _is_entity_home(state):
+        if _is_entity_home(state, home_zone_names(hass, settings, pid)):
             return False
     return evaluated > 0
+
+
+def home_zones(settings: dict, entity_id: str) -> list[str]:
+    """Zones that count as home for one presence entity, besides zone.home."""
+    return list((settings.get("presence_home_zones") or {}).get(entity_id, []))
+
+
+def home_zone_names(hass: HomeAssistant, settings: dict, entity_id: str) -> set[str]:
+    """State values that mean "home" for a person/device tracker: its extra zones by name and id."""
+    names: set[str] = set()
+    for zone_id in home_zones(settings, entity_id):
+        names.add(zone_id.split(".", 1)[-1].lower())
+        zone = hass.states.get(zone_id)
+        if zone is not None:
+            friendly = zone.attributes.get("friendly_name")
+            if isinstance(friendly, str):
+                names.add(friendly.lower())
+    return names
 
 
 def _is_entity_gone(hass: HomeAssistant, entity_id: str) -> bool:
@@ -66,20 +84,22 @@ def _is_entity_gone(hass: HomeAssistant, entity_id: str) -> bool:
     return entry.disabled_by is not None
 
 
-def presence_entity_home(state: State | None) -> bool | None:
+def presence_entity_home(state: State | None, extra_home: set[str] | None = None) -> bool | None:
     """Home/away of one presence entity, None when missing or unknown."""
     if state is None or state.state in ("unavailable", "unknown"):
         return None
-    return _is_entity_home(state)
+    return _is_entity_home(state, extra_home)
 
 
-def _is_entity_home(state: State) -> bool:
+def _is_entity_home(state: State, extra_home: set[str] | None = None) -> bool:
     """Check if a presence entity indicates someone is home.
 
-    person.*/device_tracker.* use "home"/"not_home"; binary_sensor/input_boolean use "on"/"off".
+    person.*/device_tracker.* use "home"/"not_home" or the name of the zone they are in;
+    *extra_home* holds the zones that count as home for this entity as well.
+    binary_sensor/input_boolean use "on"/"off".
     """
     if state.entity_id.startswith(("person.", "device_tracker.")):
-        return bool(state.state == "home")
+        return bool(state.state == "home" or (extra_home and str(state.state).lower() in extra_home))
     return bool(state.state == "on")
 
 

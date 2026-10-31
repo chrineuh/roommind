@@ -209,3 +209,52 @@ async def test_arrival_summary_reports_distance(hass, mock_config_entry):
     summary = coordinator.get_arrival_summary({"presence_persons": ["person.a"]})["person.a"]
     assert summary["home"] is False
     assert 105 < summary["distance_km"] < 116
+
+
+@pytest.mark.asyncio
+async def test_distance_uses_nearest_home_zone(hass, mock_config_entry):
+    """A person's own home zone counts: 330 km from HA's home, but next to their second home."""
+    _setup(
+        hass,
+        preheat=False,
+        arrival_in_min=None,
+        away_heat=15.0,
+        location=True,
+        offset_deg=3.0,
+        extra_settings={"presence_home_zones": {"person.a": ["zone.cabin"]}, "vacation_temp": 12.0},
+    )
+    person = hass.states.get("person.a")
+    cabin = MagicMock()
+    cabin.state = "0"
+    cabin.attributes = {
+        "friendly_name": "Cabin",
+        "latitude": person.attributes["latitude"] + 0.2,  # ~22 km from the person
+        "longitude": person.attributes["longitude"],
+    }
+    base = hass.states.get.side_effect
+    hass.states.get = MagicMock(side_effect=lambda eid: cabin if eid == "zone.cabin" else base(eid))
+    coordinator = _create_coordinator(hass, mock_config_entry)
+    data = await coordinator._async_update_data()
+    assert data["rooms"][AREA]["presence_trip"] is False
+    summary = coordinator.get_arrival_summary({"presence_persons": ["person.a"]})["person.a"]
+    assert 20 < summary["distance_km"] < 25
+
+
+@pytest.mark.asyncio
+async def test_person_at_extra_home_zone_is_home(hass, mock_config_entry):
+    _setup(
+        hass,
+        preheat=False,
+        arrival_in_min=None,
+        away_heat=15.0,
+        extra_settings={"presence_home_zones": {"person.a": ["zone.garden"]}},
+    )
+    hass.states.get("person.a").state = "Garden"
+    base = hass.states.get.side_effect
+    garden = MagicMock()
+    garden.state = "0"
+    garden.attributes = {"friendly_name": "Garden"}
+    hass.states.get = MagicMock(side_effect=lambda eid: garden if eid == "zone.garden" else base(eid))
+    coordinator = _create_coordinator(hass, mock_config_entry)
+    data = await coordinator._async_update_data()
+    assert data["rooms"][AREA]["presence_away"] is False

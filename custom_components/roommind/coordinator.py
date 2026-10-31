@@ -2012,7 +2012,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         """Feed every presence entity to the arrival learning."""
         if not settings.get("presence_enabled", False):
             return
-        from .utils.presence_utils import presence_entity_home
+        from .utils.presence_utils import home_zone_names, home_zones, presence_entity_home
 
         entities = set(settings.get("presence_persons", []))
         for room in rooms.values():
@@ -2021,12 +2021,16 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         use_location = bool(settings.get("presence_location", False))
         for eid in entities:
             state = self.hass.states.get(eid)
-            distance = self._distance_home_km(state) if use_location else None
-            self._arrivals.observe(eid, presence_entity_home(state), now, distance)
+            distance = self._distance_home_km(state, home_zones(settings, eid)) if use_location else None
+            home = presence_entity_home(state, home_zone_names(self.hass, settings, eid))
+            self._arrivals.observe(eid, home, now, distance)
         self._arrivals.prune(entities)
 
-    def _distance_home_km(self, state: Any) -> float | None:
-        """Distance of a GPS-tracked person/device to home, None without a usable fix."""
+    def _distance_home_km(self, state: Any, extra_zones: list[str] | None = None) -> float | None:
+        """Distance of a GPS-tracked person/device to the nearest of its homes, None without a usable fix.
+
+        Home is HA's home location plus the zones set for this person.
+        """
         if state is None:
             return None
         attrs = state.attributes or {}
@@ -2036,7 +2040,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         accuracy = attrs.get("gps_accuracy")
         if isinstance(accuracy, (int, float)) and accuracy > MAX_GPS_ACCURACY_M:
             return None
-        return distance_km(self.hass.config.latitude, self.hass.config.longitude, lat, lon)
+        homes = [(self.hass.config.latitude, self.hass.config.longitude)]
+        for zone_id in extra_zones or []:
+            zone = self.hass.states.get(zone_id)
+            z = zone.attributes if zone is not None else {}
+            if isinstance(z.get("latitude"), (int, float)) and isinstance(z.get("longitude"), (int, float)):
+                homes.append((z["latitude"], z["longitude"]))
+        return min(distance_km(hlat, hlon, lat, lon) for hlat, hlon in homes)
 
     def _update_arrival_preheat(
         self,

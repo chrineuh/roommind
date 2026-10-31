@@ -756,5 +756,11 @@
   "presence.loc_unknown": "no GPS position",
   "presence.loc_trip": "{km} km away – trip",
   "presence.loc_coming": "{km} km away – heading home, ~{time}",
-  "presence.loc_away": "{km} km away"
+  "presence.loc_away": "{km} km away",
+  "presence.zone_home": "Home",
+  "presence.zone_remove": "Remove zone",
+  "presence.zone_add": "Also counts as home (zone)",
+  "presence.assignment_title": "Who counts for which room",
+  "presence.assignment_hint": "A room is away (and heats up for an arrival) only for the persons ticked here, e.g. a child's room only for the child. All ticked = everyone.",
+  "presence.assignment_ignored": "ignores presence"
 }

@@ -64,6 +64,7 @@ export class RsSettings extends LitElement {
   @state() private _presenceNearKm = 1;
   @state() private _presenceTripKm = 100;
   @state() private _presenceTripVacation = true;
+  @state() private _presenceHomeZones: Record<string, string[]> = {};
   @state() private _scheduleOffAction: "eco" | "off" = "eco";
   @state() private _valveProtectionEnabled = false;
   @state() private _valveProtectionInterval = 7;
@@ -142,6 +143,7 @@ export class RsSettings extends LitElement {
       this._presenceNearKm = s.presence_near_km ?? 1;
       this._presenceTripKm = s.presence_trip_km ?? 100;
       this._presenceTripVacation = s.presence_trip_vacation ?? true;
+      this._presenceHomeZones = s.presence_home_zones ?? {};
       this._scheduleOffAction = s.schedule_off_action ?? "eco";
       this._valveProtectionEnabled = s.valve_protection_enabled ?? false;
       this._valveProtectionInterval = s.valve_protection_interval_days ?? 7;
@@ -241,6 +243,8 @@ export class RsSettings extends LitElement {
           .presenceNearKm=${this._presenceNearKm}
           .presenceTripKm=${this._presenceTripKm}
           .presenceTripVacation=${this._presenceTripVacation}
+          .presenceHomeZones=${this._presenceHomeZones}
+          .rooms=${this.rooms}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-presence>
       </rs-settings-panel>
@@ -454,6 +458,7 @@ export class RsSettings extends LitElement {
       presence_near_km: this._presenceNearKm,
       presence_trip_km: this._presenceTripKm,
       presence_trip_vacation: this._presenceTripVacation,
+      presence_home_zones: this._presenceHomeZones,
       schedule_off_action: this._scheduleOffAction,
       valve_protection_enabled: this._valveProtectionEnabled,
       valve_protection_interval_days: this._valveProtectionInterval,

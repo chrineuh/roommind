@@ -4,9 +4,9 @@
 import { html, css, nothing } from "lit";
 import { RsSettingsBase } from "./rs-settings-base";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant } from "../../types";
+import type { HomeAssistant, RoomConfig } from "../../types";
 import { localize } from "../../utils/localize";
-import { getSelectValue } from "../../utils/events";
+import { getSelectValue, fireSaveStatus } from "../../utils/events";
 
 /** Learned arrivals of one presence entity (roommind/presence/arrivals). */
 interface ArrivalSummary {
@@ -32,6 +32,12 @@ export class RsSettingsPresence extends RsSettingsBase {
   @property({ type: Number }) public presenceNearKm = 1;
   @property({ type: Number }) public presenceTripKm = 100;
   @property({ type: Boolean }) public presenceTripVacation = true;
+  /** person/tracker → zones that count as home besides zone.home */
+  @property({ attribute: false }) public presenceHomeZones: Record<string, string[]> = {};
+  @property({ attribute: false }) public rooms: Record<string, RoomConfig> = {};
+
+  /** Room → assigned persons, as changed here before the next poll brings them back. */
+  @state() private _roomPersons: Record<string, string[]> = {};
 
   @state() private _arrivals: Record<string, ArrivalSummary> = {};
 
@@ -48,6 +54,131 @@ export class RsSettingsPresence extends RsSettingsBase {
       this._arrivals = res.arrivals ?? {};
     } catch {
       this._arrivals = {};
+    }
+  }
+
+  /** Zones that count as home for one person (zone.home always does). */
+  private _renderHomeZones(pid: string) {
+    if (!pid.startsWith("person.") && !pid.startsWith("device_tracker.")) return nothing;
+    const l = this.hass.language;
+    const zones = this.presenceHomeZones[pid] ?? [];
+    const set = (next: string[]) => {
+      const all = { ...this.presenceHomeZones };
+      if (next.length) all[pid] = next;
+      else delete all[pid];
+      this._fire("presenceHomeZones", all);
+    };
+    return html`<div class="home-zones">
+      <span class="zone-chip fixed">${localize("presence.zone_home", l)}</span>
+      ${zones.map(
+        (z) =>
+          html`<span class="zone-chip"
+            >${(this.hass.states[z]?.attributes?.friendly_name as string) ?? z}
+            <button
+              title=${localize("presence.zone_remove", l)}
+              @click=${() => set(zones.filter((x) => x !== z))}
+            >
+              ×
+            </button></span
+          >`,
+      )}
+      <ha-entity-picker
+        class="zone-picker"
+        .hass=${this.hass}
+        .includeDomains=${["zone"]}
+        .entityFilter=${(e: { entity_id: string }) =>
+          e.entity_id !== "zone.home" && !zones.includes(e.entity_id)}
+        .label=${localize("presence.zone_add", l)}
+        @value-changed=${(e: CustomEvent) => {
+          const v = e.detail?.value as string;
+          if (v && !zones.includes(v)) set([...zones, v]);
+          (e.target as HTMLElement & { value: string }).value = "";
+        }}
+      ></ha-entity-picker>
+    </div>`;
+  }
+
+  private _assigned(areaId: string): string[] {
+    return this._roomPersons[areaId] ?? this.rooms[areaId]?.presence_persons ?? [];
+  }
+
+  /** Which persons count for which room; an empty list means everyone. */
+  private _renderAssignment() {
+    const l = this.hass.language;
+    const persons = this.presencePersons;
+    const rooms = Object.values(this.rooms)
+      .filter((r) => !r.is_outdoor)
+      .sort((a, b) => this._roomName(a).localeCompare(this._roomName(b)));
+    if (persons.length < 2 || rooms.length === 0) return nothing;
+    const personName = (pid: string) =>
+      (this.hass.states[pid]?.attributes?.friendly_name as string) ??
+      pid.split(".").slice(1).join(".");
+    return html`
+      <span class="toggle-label">${localize("presence.assignment_title", l)}</span>
+      <span class="field-hint">${localize("presence.assignment_hint", l)}</span>
+      <div class="matrix" style="--cols:${persons.length}">
+        <div class="matrix-row head">
+          <span></span>
+          ${persons.map((p) => html`<span>${personName(p)}</span>`)}
+        </div>
+        ${rooms.map((room) => {
+          const assigned = this._assigned(room.area_id);
+          const ignored = room.ignore_presence ?? false;
+          return html`<div class="matrix-row ${ignored ? "ignored" : ""}">
+            <span class="room-name"
+              >${this._roomName(room)}${
+                ignored
+                  ? html`<small>${localize("presence.assignment_ignored", l)}</small>`
+                  : nothing
+              }</span
+            >
+            ${persons.map(
+              (pid) =>
+                html`<span
+                  ><input
+                    type="checkbox"
+                    .checked=${assigned.length === 0 || assigned.includes(pid)}
+                    ?disabled=${ignored}
+                    @change=${(e: Event) =>
+                      this._toggleRoomPerson(
+                        room.area_id,
+                        pid,
+                        (e.target as HTMLInputElement).checked,
+                      )}
+                /></span>`,
+            )}
+          </div>`;
+        })}
+      </div>
+    `;
+  }
+
+  private _roomName(room: RoomConfig): string {
+    return room.display_name || this.hass.areas?.[room.area_id]?.name || room.area_id;
+  }
+
+  private async _toggleRoomPerson(areaId: string, pid: string, checked: boolean) {
+    const current = this._assigned(areaId);
+    const base = current.length === 0 ? [...this.presencePersons] : current;
+    let next = checked ? [...new Set([...base, pid])] : base.filter((p) => p !== pid);
+    // Everyone selected is stored as "everyone", so persons added later count too.
+    if (this.presencePersons.every((p) => next.includes(p))) next = [];
+    if (next.length === 0 && !checked) {
+      // Unticking the last person would mean "everyone" again; keep the box ticked instead.
+      this.requestUpdate();
+      return;
+    }
+    this._roomPersons = { ...this._roomPersons, [areaId]: next };
+    fireSaveStatus(this, "saving");
+    try {
+      await this.hass.callWS({
+        type: "roommind/rooms/save",
+        area_id: areaId,
+        presence_persons: next,
+      });
+      fireSaveStatus(this, "saved");
+    } catch {
+      fireSaveStatus(this, "error");
     }
   }
 
@@ -269,7 +400,9 @@ export class RsSettingsPresence extends RsSettingsBase {
                                   icon="mdi:account"
                                   style="--mdc-icon-size: 18px; color: var(--secondary-text-color)"
                                 ></ha-icon>
-                                <span class="person-name">${name}</span>
+                                <span class="person-name"
+                                  >${name}${this._renderHomeZones(pid)}</span
+                                >
                                 <ha-icon-button
                                   .path=${"M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"}
                                   @click=${() =>
@@ -336,7 +469,7 @@ export class RsSettingsPresence extends RsSettingsBase {
                       this._fire("presenceClearsOverride", (e.target as HTMLInputElement).checked)}
                   ></ha-switch>
                 </div>
-                ${this._renderPreheat()} ${this._renderLocation()}
+                ${this._renderAssignment()} ${this._renderPreheat()} ${this._renderLocation()}
               </div>
             `
           : nothing
@@ -377,6 +510,79 @@ export class RsSettingsPresence extends RsSettingsBase {
         font-weight: 400;
         font-size: 11px;
         color: var(--secondary-text-color);
+      }
+      .home-zones {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        margin-top: 6px;
+        font-weight: 400;
+      }
+      .zone-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+        background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.15);
+      }
+      .zone-chip.fixed {
+        background: rgba(127, 127, 127, 0.15);
+      }
+      .zone-chip button {
+        border: none;
+        background: none;
+        color: inherit;
+        cursor: pointer;
+        padding: 0;
+        font-size: 14px;
+        line-height: 1;
+      }
+      .zone-picker {
+        flex: 1 1 180px;
+        min-width: 160px;
+      }
+      .matrix {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        overflow-x: auto;
+      }
+      .matrix-row {
+        display: grid;
+        grid-template-columns: minmax(130px, 1.5fr) repeat(var(--cols), minmax(64px, 1fr));
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 13px;
+        text-align: center;
+      }
+      .matrix-row:nth-child(even) {
+        background: rgba(127, 127, 127, 0.06);
+      }
+      .matrix-row.head {
+        font-size: 12px;
+        color: var(--secondary-text-color);
+      }
+      .matrix-row.ignored {
+        opacity: 0.55;
+      }
+      .room-name {
+        text-align: left;
+      }
+      .room-name small {
+        display: block;
+        font-size: 11px;
+        color: var(--secondary-text-color);
+      }
+      .matrix input {
+        width: 18px;
+        height: 18px;
+        accent-color: var(--primary-color);
+        cursor: pointer;
       }
       .arrivals {
         display: flex;

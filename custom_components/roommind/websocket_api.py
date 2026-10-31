@@ -162,6 +162,7 @@ _ROOM_SAVE_FIELDS = (
     "climate_control_enabled",
     "show_thermostat",
     "thermostat_writes_schedule",
+    "away_heat",
 )
 
 _SETTINGS_SAVE_FIELDS = (
@@ -183,6 +184,8 @@ _SETTINGS_SAVE_FIELDS = (
     "presence_persons",
     "presence_away_action",
     "presence_clears_override",
+    "presence_preheat",
+    "presence_preheat_minutes",
     "schedule_off_action",
     "valve_protection_enabled",
     "valve_protection_interval_days",
@@ -313,6 +316,8 @@ async def websocket_list_rooms(
             "confidence": live.get("confidence"),
             "mpc_active": live.get("mpc_active", False),
             "presence_away": live.get("presence_away", False),
+            "predicted_arrival": live.get("predicted_arrival"),
+            "presence_preheat_active": live.get("presence_preheat_active", False),
             "occupancy_vacant": live.get("occupancy_vacant", False),
             "mold_risk_level": live.get("mold_risk_level", "ok"),
             "mold_surface_rh": live.get("mold_surface_rh"),
@@ -431,6 +436,7 @@ async def websocket_list_rooms(
         vol.Optional("comfort_heat"): vol.Coerce(float),
         vol.Optional("comfort_cool"): vol.Coerce(float),
         vol.Optional("eco_heat"): vol.Coerce(float),
+        vol.Optional("away_heat"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=5, max=30))),
         vol.Optional("eco_cool"): vol.Coerce(float),
         vol.Optional("presence_persons"): [str],
         vol.Optional("display_name"): str,
@@ -706,6 +712,22 @@ async def websocket_get_settings(
 # ---------------------------------------------------------------------------
 
 
+@websocket_api.websocket_command({vol.Required("type"): "roommind/presence/arrivals"})
+@callback
+def websocket_presence_arrivals(
+    hass: HomeAssistant,
+    connection: ActiveConnection,
+    msg: dict,
+) -> None:
+    """Learned arrival times per presence entity."""
+    coordinator = _get_coordinator(hass)
+    store = hass.data[DOMAIN]["store"]
+    connection.send_result(
+        msg["id"],
+        {"arrivals": coordinator.get_arrival_summary(store.get_settings()) if coordinator else {}},
+    )
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "roommind/heating/reset_learning",
@@ -746,6 +768,8 @@ def websocket_reset_boiler_learning(
         vol.Optional("presence_persons"): [str],
         vol.Optional("presence_away_action"): vol.In(["eco", "off"]),
         vol.Optional("presence_clears_override"): bool,
+        vol.Optional("presence_preheat"): bool,
+        vol.Optional("presence_preheat_minutes"): vol.All(vol.Coerce(int), vol.Range(min=10, max=240)),
         vol.Optional("schedule_off_action"): vol.In(["eco", "off"]),
         vol.Optional("valve_protection_enabled"): bool,
         vol.Optional("valve_protection_interval_days"): vol.All(vol.Coerce(int), vol.Range(min=1, max=90)),
@@ -1129,6 +1153,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     """Register all RoomMind WebSocket commands."""
     websocket_api.async_register_command(hass, websocket_list_rooms)
     websocket_api.async_register_command(hass, websocket_reset_boiler_learning)
+    websocket_api.async_register_command(hass, websocket_presence_arrivals)
     websocket_api.async_register_command(hass, websocket_save_room)
     websocket_api.async_register_command(hass, websocket_delete_room)
     websocket_api.async_register_command(hass, websocket_override_set)

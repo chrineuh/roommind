@@ -1870,14 +1870,14 @@ async def test_analytics_model_has_occupancy_sensors_false(ws_hass, store, conne
 
 
 def test_register_websocket_commands(hass):
-    """async_register_websocket_commands registers all 14 commands."""
+    """async_register_websocket_commands registers all 15 commands."""
     from unittest.mock import patch
 
     from custom_components.roommind.websocket_api import async_register_websocket_commands
 
     with patch("custom_components.roommind.websocket_api.websocket_api.async_register_command") as mock_reg:
         async_register_websocket_commands(hass)
-        assert mock_reg.call_count == 14
+        assert mock_reg.call_count == 15
 
 
 # ---------------------------------------------------------------------------

@@ -47,6 +47,8 @@ export class RsScheduleSettings extends RsScheduleBase {
   @property({ type: Number }) public ecoCool = 27.0;
   @property({ type: String }) public climateMode: ClimateMode = "auto";
   @property({ attribute: false }) public scheduleTempWarnings: ScheduleTempWarning[] = [];
+  /** The room view shows day/night itself (rs-quick-temps); then only cooling stays here. */
+  @property({ type: Boolean }) public hideHeatTemps = false;
 
   static styles = [
     RsScheduleBase.sharedStyles,
@@ -211,41 +213,51 @@ export class RsScheduleSettings extends RsScheduleBase {
               ${this._renderCreateButton(l)}`
       }
       ${
-        this.climateMode === "auto"
-          ? html`
-              <div class="view-temps">
-                ${localize("schedule.view_heat", l, {
-                  comfort: formatTemp(this.comfortHeat, this.hass),
-                  eco: formatTemp(this.ecoHeat, this.hass),
-                  unit: tempUnit(this.hass),
-                })}
-                 · 
+        this.hideHeatTemps && this.climateMode === "heat_only"
+          ? nothing
+          : this.hideHeatTemps && this.climateMode === "auto"
+            ? html`<div class="view-temps">
                 ${localize("schedule.view_cool", l, {
                   comfort: formatTemp(this.comfortCool, this.hass),
                   eco: formatTemp(this.ecoCool, this.hass),
                   unit: tempUnit(this.hass),
                 })}
-              </div>
-            `
-          : html`
-              <div class="view-temps">
-                ${localize("schedule.view_comfort", l, {
-                  temp: formatTemp(
-                    this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat,
-                    this.hass,
-                  ),
-                  unit: tempUnit(this.hass),
-                })}
-                 · 
-                ${localize("schedule.view_eco", l, {
-                  temp: formatTemp(
-                    this.climateMode === "cool_only" ? this.ecoCool : this.ecoHeat,
-                    this.hass,
-                  ),
-                  unit: tempUnit(this.hass),
-                })}
-              </div>
-            `
+              </div>`
+            : this.climateMode === "auto"
+              ? html`
+                  <div class="view-temps">
+                    ${localize("schedule.view_heat", l, {
+                      comfort: formatTemp(this.comfortHeat, this.hass),
+                      eco: formatTemp(this.ecoHeat, this.hass),
+                      unit: tempUnit(this.hass),
+                    })}
+                     · 
+                    ${localize("schedule.view_cool", l, {
+                      comfort: formatTemp(this.comfortCool, this.hass),
+                      eco: formatTemp(this.ecoCool, this.hass),
+                      unit: tempUnit(this.hass),
+                    })}
+                  </div>
+                `
+              : html`
+                  <div class="view-temps">
+                    ${localize("schedule.view_comfort", l, {
+                      temp: formatTemp(
+                        this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat,
+                        this.hass,
+                      ),
+                      unit: tempUnit(this.hass),
+                    })}
+                     · 
+                    ${localize("schedule.view_eco", l, {
+                      temp: formatTemp(
+                        this.climateMode === "cool_only" ? this.ecoCool : this.ecoHeat,
+                        this.hass,
+                      ),
+                      unit: tempUnit(this.hass),
+                    })}
+                  </div>
+                `
       }
       ${
         this.scheduleSelectorEntity

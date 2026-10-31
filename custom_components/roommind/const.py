@@ -285,3 +285,9 @@ def build_override_live(room: dict, suppressed: bool = False) -> dict:
         "override_until": room.get("override_until") if active else None,
         "override_suppressed": active and suppressed,
     }
+
+
+# Heating up before a learned arrival (presence)
+DEFAULT_PRESENCE_PREHEAT_MINUTES = 60  # without a trained room model
+PRESENCE_PREHEAT_MIN_CONFIDENCE = 0.3
+PRESENCE_PREHEAT_MAX_MINUTES = 240

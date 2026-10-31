@@ -66,6 +66,13 @@ def _is_entity_gone(hass: HomeAssistant, entity_id: str) -> bool:
     return entry.disabled_by is not None
 
 
+def presence_entity_home(state: State | None) -> bool | None:
+    """Home/away of one presence entity, None when missing or unknown."""
+    if state is None or state.state in ("unavailable", "unknown"):
+        return None
+    return _is_entity_home(state)
+
+
 def _is_entity_home(state: State) -> bool:
     """Check if a presence entity indicates someone is home.
 

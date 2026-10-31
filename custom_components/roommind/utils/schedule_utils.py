@@ -224,11 +224,13 @@ def resolve_targets_at_time(
     schedule_off_action: str = "eco",
     presence_clears_override: bool = False,
     room_vacant: bool = False,
+    away_heat: float | None = None,
 ) -> TargetTemps:
     """Resolve dual heat/cool target temps at a specific timestamp.
 
     Returns TargetTemps(heat, cool). None values mean "force off".
     ``room_vacant`` caps the schedule result at eco (occupancy eco, #180).
+    ``away_heat`` is the room's own heat target while everyone is away (eco when None).
     """
     # 1. Override — split heat/cool dead-band (skipped when presence-away suppresses it)
     if (override_heat is not None or override_cool is not None) and (override_until is None or ts < override_until):
@@ -242,7 +244,7 @@ def resolve_targets_at_time(
     if presence_away:
         if presence_away_action == "off":
             return TargetTemps(heat=None, cool=None)
-        return TargetTemps(heat=eco_heat, cool=eco_cool)
+        return TargetTemps(heat=away_heat if away_heat is not None else eco_heat, cool=eco_cool)
     # 3. Schedule blocks
     targets = _schedule_targets_at_time(
         ts, schedule_blocks, comfort_heat, comfort_cool, eco_heat, eco_cool, block_temp_converter, schedule_off_action
@@ -429,11 +431,13 @@ def make_target_resolver(
     presence_away: bool = False,
     mold_prevention_delta: float = 0.0,
     room_vacant: bool = False,
+    presence_return_ts: float | None = None,
 ) -> Callable[[float], TargetTemps]:
     """Create a sync target resolver function (schedule blocks pre-fetched).
 
     Returns TargetTemps with None values for timestamps where devices should
-    be turned off.
+    be turned off. ``presence_return_ts`` is the learned arrival of someone:
+    from then on the schedule applies again, so the MPC can heat up in time.
     """
     comfort_heat = room.get("comfort_heat", room.get("comfort_temp", DEFAULT_COMFORT_HEAT))
     comfort_cool = room.get("comfort_cool", DEFAULT_COMFORT_COOL)
@@ -448,6 +452,7 @@ def make_target_resolver(
     schedule_off_action = settings.get("schedule_off_action", "eco")
     presence_clears_override = bool(settings.get("presence_clears_override", False))
     climate_mode = room.get("climate_mode", "auto")
+    away_heat = room.get("away_heat")
 
     converter: Callable[[float], float] | None = None
     if hass is not None:
@@ -469,12 +474,13 @@ def make_target_resolver(
             comfort_cool,
             eco_heat,
             eco_cool,
-            presence_away=presence_away,
+            presence_away=presence_away and (presence_return_ts is None or ts < presence_return_ts),
             block_temp_converter=converter,
             presence_away_action=presence_away_action,
             schedule_off_action=schedule_off_action,
             presence_clears_override=presence_clears_override,
             room_vacant=room_vacant,
+            away_heat=away_heat,
         )
         if targets.heat is None and targets.cool is None:
             return targets

@@ -33,6 +33,9 @@ export interface RoomLiveData {
   heating_power: number; // 0-100
   device_setpoint: number | null; // Device target temp in Full Control mode
   override_active: boolean;
+  /** Learned arrival while everyone is away (epoch s), and whether the room heats up for it. */
+  predicted_arrival?: number | null;
+  presence_preheat_active?: boolean;
   override_type: OverrideType | null;
   override_heat: number | null;
   override_cool: number | null;
@@ -188,6 +191,8 @@ export interface RoomConfig {
   ignore_presence?: boolean;
   show_thermostat?: boolean;
   thermostat_writes_schedule?: boolean;
+  /** Heat target while everyone is away (°C); null = eco. */
+  away_heat?: number | null;
   is_outdoor?: boolean;
   valve_protection_exclude?: string[];
   heat_source_orchestration?: boolean;
@@ -217,6 +222,8 @@ export interface GlobalSettings {
   presence_persons?: string[];
   presence_away_action?: "eco" | "off";
   presence_clears_override?: boolean;
+  presence_preheat?: boolean;
+  presence_preheat_minutes?: number;
   schedule_off_action?: "eco" | "off";
   valve_protection_enabled?: boolean;
   valve_protection_interval_days?: number;

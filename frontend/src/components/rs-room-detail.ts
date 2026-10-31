@@ -24,6 +24,8 @@ import "./rs-covers-section";
 import "./rs-heat-source-section";
 import "./rs-thermostat-card";
 import "./rs-schedule-editor";
+import "./rs-quick-temps";
+import type { RsQuickTemps, QuickTempField } from "./rs-quick-temps";
 import "../components/shared/rs-toggle-row";
 import "../components/shared/rs-toggle-card";
 import "../components/shared/rs-edit-dialog";
@@ -34,7 +36,7 @@ import { resolveHeatingSystemType } from "../utils/device-utils";
 import { DEFAULT_OCCUPANCY_ECO_DELAY } from "../utils/constants";
 import type { RsOverrideSection } from "./rs-override-section";
 import { targetsFromServiceData, writeDayTemperature } from "../utils/schedule-write";
-import { toCelsius } from "../utils/temperature";
+import { toCelsius, toDisplay } from "../utils/temperature";
 
 const CONTROL_DOCS_URL =
   "https://github.com/snazzybean/roommind/blob/main/docs/control-and-devices.md";
@@ -102,6 +104,7 @@ export class RsRoomDetail extends LitElement {
   @state() private _climateControlEnabled = true;
   @state() private _showThermostat = true;
   @state() private _thermostatWritesSchedule = true;
+  @state() private _awayHeat: number | null = null;
   /** Schedule open in the weekly editor: null = closed, "" = new schedule. */
   @state() private _scheduleEditorEntity: string | null = null;
   @state() private _heatSourceOrchestration = false;
@@ -328,6 +331,7 @@ export class RsRoomDetail extends LitElement {
       this._climateControlEnabled = this.config.climate_control_enabled ?? true;
       this._showThermostat = this.config.show_thermostat ?? true;
       this._thermostatWritesSchedule = this.config.thermostat_writes_schedule ?? true;
+      this._awayHeat = this.config.away_heat ?? null;
       this._heatSourceOrchestration = this.config.heat_source_orchestration ?? false;
       this._heatSourcePrimaryDelta = this.config.heat_source_primary_delta ?? 1.5;
       this._heatSourceOutdoorThreshold = this.config.heat_source_outdoor_threshold ?? 5.0;
@@ -372,6 +376,7 @@ export class RsRoomDetail extends LitElement {
       this._climateControlEnabled = true;
       this._showThermostat = true;
       this._thermostatWritesSchedule = true;
+      this._awayHeat = null;
       this._heatSourceOrchestration = false;
       this._heatSourcePrimaryDelta = 1.5;
       this._heatSourceOutdoorThreshold = 5.0;
@@ -510,6 +515,7 @@ export class RsRoomDetail extends LitElement {
                       .climateMode=${this._climateMode}
                       .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
                       .editing=${false}
+                      .hideHeatTemps=${true}
                       @schedules-changed=${this._onSchedulesChanged}
                       @schedule-selector-changed=${this._onScheduleSelectorChanged}
                       @comfort-heat-changed=${this._onComfortHeatChanged}
@@ -517,6 +523,18 @@ export class RsRoomDetail extends LitElement {
                       @eco-heat-changed=${this._onEcoHeatChanged}
                       @eco-cool-changed=${this._onEcoCoolChanged}
                     ></rs-schedule-settings>
+                    <rs-quick-temps
+                      .hass=${this.hass}
+                      .climateMode=${this._climateMode}
+                      .comfortHeat=${this._comfortHeat}
+                      .ecoHeat=${this._ecoHeat}
+                      .awayHeat=${this._awayHeat}
+                      .scheduleEntity=${this._activeScheduleEntity()}
+                      .presenceEnabled=${this.presenceEnabled && !this._ignorePresence}
+                      .predictedArrival=${this.config?.live?.predicted_arrival ?? null}
+                      .preheatActive=${this.config?.live?.presence_preheat_active ?? false}
+                      @quick-temp-changed=${this._onQuickTempChanged}
+                    ></rs-quick-temps>
                     ${
                       this.config
                         ? html`
@@ -1211,6 +1229,44 @@ export class RsRoomDetail extends LitElement {
     }
     if (nightTemp !== null && this._setNightTemp(nightTemp)) changed = true;
     if (changed) this._autoSave();
+    this._quickTemps()?.refresh();
+  };
+
+  private _quickTemps(): RsQuickTemps | null {
+    return this.shadowRoot?.querySelector("rs-quick-temps") ?? null;
+  }
+
+  /** The schedule in force: the backend's active index, else the first one. */
+  private _activeScheduleEntity(): string {
+    const idx = this.config?.live?.active_schedule_index ?? -1;
+    return this._schedules[idx >= 0 ? idx : 0]?.entity_id ?? "";
+  }
+
+  private _onQuickTempChanged = async (
+    e: CustomEvent<{ field: QuickTempField; value: number | null }>,
+  ) => {
+    e.stopPropagation();
+    const { field, value } = e.detail;
+    if (field === "night" && value !== null) {
+      if (this._setNightTemp(value)) this._autoSave();
+    } else if (field === "away") {
+      this._awayHeat = value;
+      this._autoSave();
+    } else if (field === "day" && value !== null) {
+      // Comfort is the day value of blocks without their own temperature, and of rooms without a schedule.
+      this._comfortHeat = value;
+      if (this._comfortCool < value) this._comfortCool = value;
+      this._autoSave();
+      const schedule = this._activeScheduleEntity();
+      if (schedule) {
+        try {
+          const display = Math.round(toDisplay(value, this.hass) * 10) / 10;
+          await writeDayTemperature(this.hass, schedule, this._climateMode, { heat: display });
+        } catch (err) {
+          this._error = err instanceof Error ? err.message : String(err);
+        }
+      }
+    }
   };
 
   /** Night = what applies outside the schedule blocks, i.e. the room's eco temperature (°C). */
@@ -1247,6 +1303,7 @@ export class RsRoomDetail extends LitElement {
       if (!(await writeDayTemperature(this.hass, scheduleId, this._climateMode, temps))) {
         return false;
       }
+      this._quickTemps()?.refresh();
     } else {
       const night = this._climateMode === "cool_only" ? temps.cool : temps.heat;
       if (night === undefined) return false;
@@ -1340,6 +1397,7 @@ export class RsRoomDetail extends LitElement {
       climate_control_enabled: this._climateControlEnabled,
       show_thermostat: this._showThermostat,
       thermostat_writes_schedule: this._thermostatWritesSchedule,
+      away_heat: this._awayHeat,
       covers_auto_enabled: this._coversAutoEnabled,
       covers_deploy_threshold: this._coversDeployThreshold,
       covers_min_position: this._coversMinPosition,

@@ -58,6 +58,8 @@ export class RsSettings extends LitElement {
   @state() private _presencePersons: string[] = [];
   @state() private _presenceAwayAction: "eco" | "off" = "eco";
   @state() private _presenceClearsOverride = false;
+  @state() private _presencePreheat = false;
+  @state() private _presencePreheatMinutes = 60;
   @state() private _scheduleOffAction: "eco" | "off" = "eco";
   @state() private _valveProtectionEnabled = false;
   @state() private _valveProtectionInterval = 7;
@@ -130,6 +132,8 @@ export class RsSettings extends LitElement {
       this._presencePersons = s.presence_persons ?? [];
       this._presenceAwayAction = s.presence_away_action ?? "eco";
       this._presenceClearsOverride = s.presence_clears_override ?? false;
+      this._presencePreheat = s.presence_preheat ?? false;
+      this._presencePreheatMinutes = s.presence_preheat_minutes ?? 60;
       this._scheduleOffAction = s.schedule_off_action ?? "eco";
       this._valveProtectionEnabled = s.valve_protection_enabled ?? false;
       this._valveProtectionInterval = s.valve_protection_interval_days ?? 7;
@@ -223,6 +227,8 @@ export class RsSettings extends LitElement {
           .presencePersons=${this._presencePersons}
           .presenceAwayAction=${this._presenceAwayAction}
           .presenceClearsOverride=${this._presenceClearsOverride}
+          .presencePreheat=${this._presencePreheat}
+          .presencePreheatMinutes=${this._presencePreheatMinutes}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-presence>
       </rs-settings-panel>
@@ -430,6 +436,8 @@ export class RsSettings extends LitElement {
       presence_persons: this._presencePersons.filter((p) => p),
       presence_away_action: this._presenceAwayAction,
       presence_clears_override: this._presenceClearsOverride,
+      presence_preheat: this._presencePreheat,
+      presence_preheat_minutes: this._presencePreheatMinutes,
       schedule_off_action: this._scheduleOffAction,
       valve_protection_enabled: this._valveProtectionEnabled,
       valve_protection_interval_days: this._valveProtectionInterval,

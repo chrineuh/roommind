@@ -3,10 +3,18 @@
  */
 import { html, css, nothing } from "lit";
 import { RsSettingsBase } from "./rs-settings-base";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant } from "../../types";
 import { localize } from "../../utils/localize";
 import { getSelectValue } from "../../utils/events";
+
+/** Learned arrivals of one presence entity (roommind/presence/arrivals). */
+interface ArrivalSummary {
+  arrivals: number;
+  typical: Record<string, string>;
+  home: boolean | null;
+  next: number | null;
+}
 
 @customElement("rs-settings-presence")
 export class RsSettingsPresence extends RsSettingsBase {
@@ -15,6 +23,105 @@ export class RsSettingsPresence extends RsSettingsBase {
   @property({ type: Array }) public presencePersons: string[] = [];
   @property({ type: String }) public presenceAwayAction: "eco" | "off" = "eco";
   @property({ type: Boolean }) public presenceClearsOverride = false;
+  @property({ type: Boolean }) public presencePreheat = false;
+  @property({ type: Number }) public presencePreheatMinutes = 60;
+
+  @state() private _arrivals: Record<string, ArrivalSummary> = {};
+
+  connectedCallback() {
+    super.connectedCallback();
+    void this._loadArrivals();
+  }
+
+  private async _loadArrivals() {
+    try {
+      const res = await this.hass.callWS<{ arrivals: Record<string, ArrivalSummary> }>({
+        type: "roommind/presence/arrivals",
+      });
+      this._arrivals = res.arrivals ?? {};
+    } catch {
+      this._arrivals = {};
+    }
+  }
+
+  private _renderPreheat() {
+    const l = this.hass.language;
+    const days = [0, 1, 2, 3, 4, 5, 6];
+    return html`
+      <div class="toggle-row">
+        <div class="toggle-text">
+          <span class="toggle-label">${localize("presence.preheat_label", l)}</span>
+          <span class="toggle-hint">${localize("presence.preheat_hint", l)}</span>
+        </div>
+        <ha-switch
+          .checked=${this.presencePreheat}
+          @change=${(e: Event) =>
+            this._fire("presencePreheat", (e.target as HTMLInputElement).checked)}
+        ></ha-switch>
+      </div>
+      ${
+        this.presencePreheat
+          ? html`
+              <ha-textfield
+                type="number"
+                .value=${String(this.presencePreheatMinutes)}
+                .label=${localize("presence.preheat_minutes", l)}
+                .suffix=${"min"}
+                min="10"
+                max="240"
+                step="5"
+                @change=${(e: Event) => {
+                  const v = parseInt((e.target as HTMLInputElement).value, 10);
+                  if (v >= 10 && v <= 240) this._fire("presencePreheatMinutes", v);
+                }}
+              ></ha-textfield>
+              <span class="field-hint">${localize("presence.preheat_minutes_hint", l)}</span>
+              <span class="toggle-label">${localize("presence.learned_title", l)}</span>
+              <div class="arrivals">
+                <div class="arrival-row head">
+                  <span></span>
+                  ${days.map(
+                    (d) =>
+                      html`<span
+                        >${localize(
+                          `schedule_editor.day_short.${["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"][d]}` as never,
+                          l,
+                        )}</span
+                      >`,
+                  )}
+                </div>
+                ${this.presencePersons.map((pid) => {
+                  const a = this._arrivals[pid];
+                  const name =
+                    (this.hass.states[pid]?.attributes?.friendly_name as string) ??
+                    pid.split(".").slice(1).join(".");
+                  return html`<div class="arrival-row">
+                    <span class="person-name"
+                      >${name}
+                      <small
+                        >${localize("presence.learned_count", l, { count: a?.arrivals ?? 0 })}${
+                          a?.next
+                            ? html` ·
+                              ${localize("presence.learned_next", l, {
+                                time: new Date(a.next * 1000).toLocaleTimeString([], {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                }),
+                              })}`
+                            : nothing
+                        }</small
+                      ></span
+                    >
+                    ${days.map((d) => html`<span>${a?.typical?.[d] ?? "–"}</span>`)}
+                  </div>`;
+                })}
+              </div>
+              <span class="field-hint">${localize("presence.learned_hint", l)}</span>
+            `
+          : nothing
+      }
+    `;
+  }
 
   render() {
     const l = this.hass.language;
@@ -118,6 +225,7 @@ export class RsSettingsPresence extends RsSettingsBase {
                       this._fire("presenceClearsOverride", (e.target as HTMLInputElement).checked)}
                   ></ha-switch>
                 </div>
+                ${this._renderPreheat()}
               </div>
             `
           : nothing
@@ -152,6 +260,33 @@ export class RsSettingsPresence extends RsSettingsBase {
         flex: 1;
         font-size: 14px;
         font-weight: 500;
+      }
+      .person-name small {
+        display: block;
+        font-weight: 400;
+        font-size: 11px;
+        color: var(--secondary-text-color);
+      }
+      .arrivals {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        overflow-x: auto;
+      }
+      .arrival-row {
+        display: grid;
+        grid-template-columns: minmax(120px, 1.5fr) repeat(7, minmax(44px, 1fr));
+        gap: 6px;
+        align-items: center;
+        font-size: 13px;
+        text-align: center;
+      }
+      .arrival-row .person-name {
+        text-align: left;
+      }
+      .arrival-row.head {
+        font-size: 11px;
+        color: var(--secondary-text-color);
       }
     `,
   ];

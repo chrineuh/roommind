@@ -55,6 +55,8 @@ NORMAL_ROOM_KEYS = {
     "confidence",
     "mpc_active",
     "presence_away",
+    "predicted_arrival",
+    "presence_preheat_active",
     "occupancy_vacant",
     "force_off",
     "mold_risk_level",

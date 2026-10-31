@@ -27,6 +27,7 @@ from .const import (
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
     DEFAULT_OUTDOOR_HEATING_MAX,
+    DEFAULT_PRESENCE_PREHEAT_MINUTES,
     DOMAIN,
     HEATING_BOOST_TARGET,
     HISTORY_ROTATE_CYCLES,
@@ -42,6 +43,8 @@ from .const import (
     OUTDOOR_UNAVAILABLE_NOTIFICATION_ID,
     OUTDOOR_UNAVAILABLE_NOTIFY_CYCLES,
     OVERRIDE_TURN_ON_REFRESH_DELAY_S,
+    PRESENCE_PREHEAT_MAX_MINUTES,
+    PRESENCE_PREHEAT_MIN_CONFIDENCE,
     SCHEDULE_STATE_ON,
     THERMAL_SAVE_CYCLES,
     UPDATE_INTERVAL,
@@ -67,6 +70,7 @@ from .control.residual_heat import mean_rebound
 from .control.solar import compute_q_solar_norm
 from .control.thermal_model import RoomModelManager
 from .managers.ac_coil_dry_manager import AcCoilDryManager, CoilDryRoomResult
+from .managers.arrival_predictor import ArrivalPredictor
 from .managers.boiler_release import BoilerReleaseManager, ReleaseConfig, RoomHeatDemand
 from .managers.compressor_group_manager import (
     CompressorGroupConfig,
@@ -213,6 +217,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._compressor_manager = CompressorGroupManager()
         self._release_manager = BoilerReleaseManager()
         self._heating_sensor_groups: set[str] = set()
+        self._arrivals = ArrivalPredictor()
+        # Learned arrival per room while everyone is away, and rooms already heating up for it
+        self._arrival_ts: dict[str, float] = {}
+        self._preheating: set[str] = set()
         # AC evaporator drying (anti-odour): bounded fan run after cooling
         self._coil_dry_manager = AcCoilDryManager(hass)
         # Heat source orchestration state (per room)
@@ -303,6 +311,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             self._coil_dry_manager.load_state(settings.get("coil_dry_state", {}))
             self._head_offsets.load_state(settings.get("ac_head_offsets", {}))
             self._release_manager.load_thermal(settings.get("boiler_thermal", {}))
+            self._arrivals.load_state(settings.get("arrival_history", {}))
             self._model_loaded = True
 
         # Initialize history store (once)
@@ -310,6 +319,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             self._history_store = HistoryStore(self.hass.config.path(".storage/roommind_history"))
 
         room_states: dict[str, dict] = {}
+        self._observe_presence(settings, rooms)
 
         # Read weather forecast once for all rooms
         outdoor_forecast = await self._weather_manager.async_read_forecast(settings)
@@ -468,6 +478,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         if self._release_manager.thermal_dirty and self._thermal_save_count == 0:
             await store.async_save_settings({"boiler_thermal": self._release_manager.get_thermal_state()})
             self._release_manager.thermal_dirty = False
+
+        # Arrivals are rare; store each one right away
+        if self._arrivals.dirty:
+            await store.async_save_settings({"arrival_history": self._arrivals.get_state()})
+            self._arrivals.dirty = False
 
         # Coil dry: drop state for devices no longer configured anywhere
         self._coil_dry_manager.prune(set(build_rooms_devices_map(rooms)))
@@ -757,6 +772,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Determine dual heat/cool target temperatures
         # Returns TargetTemps(heat, cool). None values mean "force off".
         occupancy_vacant = is_room_vacant(self.hass, room, time.time())
+        self._update_arrival_preheat(area_id, room, settings, schedule_blocks, current_temp)
         targets = self._resolve_target_temps(
             room, settings, schedule_blocks, schedule_entity_id, room_vacant=occupancy_vacant
         )
@@ -788,6 +804,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             presence_away=presence_away,
             mold_prevention_delta=mold_prevention_temp_delta,
             room_vacant=occupancy_vacant,
+            presence_return_ts=self._arrival_ts.get(area_id),
         )
 
         # After a reload or restart the previous mode is unknown; seed it from what the
@@ -1641,6 +1658,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "confidence": self._model_manager.get_confidence(area_id),
             "mpc_active": mpc_active,
             "presence_away": presence_away,
+            "predicted_arrival": self._arrival_ts.get(area_id),
+            "presence_preheat_active": area_id in self._preheating,
             "occupancy_vacant": occupancy_vacant,
             "force_off": force_off,
             "mold_risk_level": mold_risk_level,
@@ -1959,10 +1978,94 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         return frozenset(entity_id for entity_id in stateless if registry.async_get(entity_id) is None)
 
     def _is_presence_away(self, room: dict, settings: dict) -> bool:
-        """Return True if presence detection says all relevant persons are away."""
+        """Return True if presence detection says all relevant persons are away.
+
+        A room already heating up for a learned arrival counts as occupied.
+        """
         from .utils.presence_utils import is_presence_away
 
+        if room.get("area_id") in self._preheating:
+            return False
         return is_presence_away(self.hass, room, settings)  # all tracked persons are away
+
+    @staticmethod
+    def _presence_entities(room: dict, settings: dict) -> list[str]:
+        """The presence entities that decide for this room (room's own, else the global ones)."""
+        return list(room.get("presence_persons") or settings.get("presence_persons", []))
+
+    def _observe_presence(self, settings: dict, rooms: dict[str, dict]) -> None:
+        """Feed every presence entity to the arrival learning."""
+        if not settings.get("presence_enabled", False):
+            return
+        from .utils.presence_utils import presence_entity_home
+
+        entities = set(settings.get("presence_persons", []))
+        for room in rooms.values():
+            entities.update(room.get("presence_persons", []))
+        now = time.time()
+        for eid in entities:
+            self._arrivals.observe(eid, presence_entity_home(self.hass.states.get(eid)), now)
+        self._arrivals.prune(entities)
+
+    def _update_arrival_preheat(
+        self,
+        area_id: str,
+        room: dict,
+        settings: dict,
+        schedule_blocks: dict | None,
+        current_temp: float | None,
+    ) -> None:
+        """Expect a learned arrival while everyone is away and start heating in time for it.
+
+        The arrival goes into the MPC's target lookahead. On top of that the room
+        leaves its away temperature once the learned heat-up time to the
+        arrival target is reached, which also works without MPC.
+        """
+        from .utils.presence_utils import is_presence_away
+        from .utils.schedule_utils import make_target_resolver
+
+        self._preheating.discard(area_id)
+        self._arrival_ts.pop(area_id, None)
+        if (
+            not settings.get("presence_preheat", False)
+            or room.get("ignore_presence", False)
+            or not is_presence_away(self.hass, room, settings)
+        ):
+            return
+        now = time.time()
+        arrival = self._arrivals.predict(self._presence_entities(room, settings), now)
+        if arrival is None:
+            return
+        self._arrival_ts[area_id] = arrival
+        target = make_target_resolver(schedule_blocks, room, settings, hass=self.hass)(arrival).heat
+        lead = self._heat_up_seconds(area_id, current_temp, target, settings)
+        if arrival - now <= lead:
+            self._preheating.add(area_id)
+
+    def _heat_up_seconds(self, area_id: str, current_temp: float | None, target: float | None, settings: dict) -> float:
+        """Time the room needs to reach *target* at full heat, from its learned model (else the set fallback)."""
+        fallback = float(settings.get("presence_preheat_minutes", DEFAULT_PRESENCE_PREHEAT_MINUTES)) * 60
+        if current_temp is None or target is None:
+            return fallback
+        if current_temp >= target:
+            return 0.0
+        if self._model_manager.get_confidence(area_id) < PRESENCE_PREHEAT_MIN_CONFIDENCE:
+            return fallback
+        model = self._model_manager.get_model(area_id)
+        if model.Q_heat <= 0:
+            return fallback
+        outdoor = self.outdoor_temp_effective if self.outdoor_temp_effective is not None else 5.0
+        temp, minutes = current_temp, 0
+        while temp < target and minutes < PRESENCE_PREHEAT_MAX_MINUTES:
+            temp = model.predict(temp, outdoor, model.Q_heat, 5)
+            minutes += 5
+        # A margin for valves opening and the model being off a little
+        return min(PRESENCE_PREHEAT_MAX_MINUTES, minutes * 1.2 + 10) * 60
+
+    def get_arrival_summary(self, settings: dict) -> dict:
+        """Learned arrivals per presence entity for the panel."""
+        now = time.time()
+        return {eid: self._arrivals.summary(eid, now) for eid in settings.get("presence_persons", [])}
 
     def _get_active_schedule_index(self, room: dict) -> int:
         """Return the index of the active schedule in room['schedules'].
@@ -2055,12 +2158,15 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     )
                 )
 
-        # 2.5 Presence-based eco or off (skip if room ignores presence)
+        # 2.5 Presence-based away temperature (eco unless the room has its own) or off
         if not room.get("ignore_presence", False) and self._is_presence_away(room, settings):
             if settings.get("presence_away_action", "eco") == "off":
                 return TargetTemps(heat=None, cool=None)
+            away_heat = room.get("away_heat")
             return TargetTemps(
-                heat=room.get("eco_heat", room.get("eco_temp", DEFAULT_ECO_HEAT)),
+                heat=away_heat
+                if away_heat is not None
+                else room.get("eco_heat", room.get("eco_temp", DEFAULT_ECO_HEAT)),
                 cool=room.get("eco_cool", DEFAULT_ECO_COOL),
             )
 

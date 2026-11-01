@@ -119,6 +119,8 @@ export interface CompressorGroup {
   release_smart?: boolean;
   release_urgent_delta?: number;
   release_max_wait_minutes?: number;
+  /** Weighted demand that keeps a running release on. */
+  release_keep_demand?: number;
   /** Boiler water temperature sensor and the temperature from which radiators get warm. */
   boiler_temp_sensor?: string;
   boiler_usable_temp?: number;

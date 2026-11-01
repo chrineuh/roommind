@@ -17,6 +17,7 @@ from ..const import (
 )
 from .boiler_release import (
     DEFAULT_BOILER_USABLE_TEMP,
+    DEFAULT_RELEASE_KEEP_DEMAND,
     DEFAULT_RELEASE_MAX_WAIT_MINUTES,
     DEFAULT_RELEASE_MIN_DEMAND,
     DEFAULT_RELEASE_URGENT_DELTA,
@@ -44,6 +45,7 @@ class CompressorGroupConfig:
     release_smart: bool = False
     release_urgent_delta: float = DEFAULT_RELEASE_URGENT_DELTA
     release_max_wait_seconds: float = DEFAULT_RELEASE_MAX_WAIT_MINUTES * 60
+    release_keep_demand: float = DEFAULT_RELEASE_KEEP_DEMAND
     boiler_temp_sensor: str = ""
     boiler_usable_temp: float = DEFAULT_BOILER_USABLE_TEMP
     burner_entity: str = ""
@@ -95,6 +97,7 @@ class CompressorGroupManager:
                 release_smart=g.get("release_smart", False),
                 release_urgent_delta=g.get("release_urgent_delta", DEFAULT_RELEASE_URGENT_DELTA),
                 release_max_wait_seconds=g.get("release_max_wait_minutes", DEFAULT_RELEASE_MAX_WAIT_MINUTES) * 60,
+                release_keep_demand=g.get("release_keep_demand", DEFAULT_RELEASE_KEEP_DEMAND),
                 boiler_temp_sensor=g.get("boiler_temp_sensor", ""),
                 boiler_usable_temp=g.get("boiler_usable_temp", DEFAULT_BOILER_USABLE_TEMP),
                 burner_entity=g.get("burner_entity", ""),
@@ -124,10 +127,11 @@ class CompressorGroupManager:
 
         Returns False if the entity's compressor group is in min-off phase
         (compressor recently turned off and hasn't waited long enough).
-        Returns True if entity is not in any group.
+        Returns True if entity is not in any group, or in a boiler group
+        (a release entity times the burner; the valves stay free).
         """
         group_id = self._entity_to_group.get(entity_id)
-        if group_id is None:
+        if group_id is None or self._groups[group_id].release_entity:
             return True
         state = self._states[group_id]
         if state.active_members:
@@ -142,10 +146,12 @@ class CompressorGroupManager:
 
         Returns True if this is the last active member in its group
         AND the compressor hasn't run long enough (min-run not reached).
-        Returns False if entity is not in any group.
+        Returns False if entity is not in any group, or in a boiler group:
+        holding a radiator valve open does not protect a burner, the
+        release's own min run does.
         """
         group_id = self._entity_to_group.get(entity_id)
-        if group_id is None:
+        if group_id is None or self._groups[group_id].release_entity:
             return False
         state = self._states[group_id]
         if entity_id not in state.active_members:

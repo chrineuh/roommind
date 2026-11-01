@@ -29,6 +29,7 @@ from .const import (
 from .control.direct_valve import async_release_valve
 from .managers.boiler_release import (
     DEFAULT_BOILER_USABLE_TEMP,
+    DEFAULT_RELEASE_KEEP_DEMAND,
     DEFAULT_RELEASE_MAX_WAIT_MINUTES,
     DEFAULT_RELEASE_MIN_DEMAND,
     DEFAULT_RELEASE_URGENT_DELTA,
@@ -841,6 +842,9 @@ def websocket_reset_boiler_learning(
                 ),
                 vol.Optional("release_max_wait_minutes", default=DEFAULT_RELEASE_MAX_WAIT_MINUTES): vol.All(
                     vol.Coerce(int), vol.Range(min=5, max=240)
+                ),
+                vol.Optional("release_keep_demand", default=DEFAULT_RELEASE_KEEP_DEMAND): vol.All(
+                    vol.Coerce(float), vol.Range(min=0.1, max=10)
                 ),
                 vol.Optional("boiler_temp_sensor", default=""): str,
                 vol.Optional("boiler_usable_temp", default=DEFAULT_BOILER_USABLE_TEMP): vol.All(

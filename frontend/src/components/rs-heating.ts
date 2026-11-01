@@ -595,6 +595,15 @@ export class RsHeating extends LitElement {
                   50,
                   1,
                 )}
+                ${num(
+                  "release_keep_demand",
+                  g.release_keep_demand ?? 0.5,
+                  localize("heating.keep_demand", l),
+                  localize("heating.keep_demand_hint", l),
+                  0.1,
+                  10,
+                  0.1,
+                )}
               </div>
               <div class="field">
                 <ha-formfield .label=${localize("compressor.release_smart", l)}>

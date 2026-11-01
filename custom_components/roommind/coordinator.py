@@ -2685,6 +2685,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     urgent_delta=group.release_urgent_delta,
                     max_wait_seconds=group.release_max_wait_seconds,
                     usable_temp=group.boiler_usable_temp,
+                    keep_demand=group.release_keep_demand,
                 )
                 boiler_temp = None
                 if group.boiler_temp_sensor:

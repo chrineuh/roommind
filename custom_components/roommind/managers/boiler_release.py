@@ -17,9 +17,9 @@ its heating circuit behave: how fast the water heats up while released and
 how fast it cools down while idle (smoothed per cycle, kept across restarts).
 That is used twice:
 
-* A boiler that is still warm enough to heat the radiators is released for
-  any demand, so the stored heat goes into the rooms instead of being lost
-  and the next cold start is avoided.
+* While the boiler water is still warm enough to heat the radiators the
+  burner is not started: the rooms use the stored heat first, which saves
+  starts and keeps the burner from short-cycling on small demands.
 * Smart mode starts a cold boiler earlier by its learned heat-up time, so the
   water is warm when a waiting room reaches the maximum wait.
 
@@ -38,6 +38,8 @@ DEFAULT_RELEASE_MIN_DEMAND = 1
 DEFAULT_RELEASE_URGENT_DELTA = 1.5
 DEFAULT_RELEASE_MAX_WAIT_MINUTES = 45
 DEFAULT_BOILER_USABLE_TEMP = 45.0
+DEFAULT_RELEASE_KEEP_DEMAND = 0.5  # weighted rooms that keep a running release on
+MIN_ROOM_WEIGHT = 0.2  # a room asking for less than this share of heat is not counted as demand
 
 # Learning of the boiler's heat-up / cool-down rates (K per minute)
 _RATE_ALPHA = 0.2  # weight of a new observation
@@ -57,6 +59,7 @@ REASON_MIN_RUN = "min_run"
 REASON_MIN_OFF = "min_off"
 REASON_RESIDUAL_HEAT = "residual_heat"
 REASON_PREHEAT = "preheat"
+REASON_LOW_DEMAND = "low_demand"
 
 
 @dataclass
@@ -78,6 +81,7 @@ class ReleaseConfig:
     urgent_delta: float = DEFAULT_RELEASE_URGENT_DELTA
     max_wait_seconds: float = DEFAULT_RELEASE_MAX_WAIT_MINUTES * 60
     usable_temp: float = DEFAULT_BOILER_USABLE_TEMP
+    keep_demand: float = DEFAULT_RELEASE_KEEP_DEMAND
 
 
 @dataclass
@@ -150,28 +154,39 @@ def decide_release(
     boiler_temp: float | None = None,
     lead_seconds: float = 0.0,
 ) -> tuple[bool, str]:
-    """Return (release on?, reason) before min-run/min-off are applied."""
+    """Return (release on?, reason) before min-run/min-off are applied.
+
+    Once on, the release keeps running only while the rooms still take a real
+    share of heat (weighted demand of at least ``keep_demand``); a room that
+    only trickles (an MPC holding a few percent) does not keep the burner going.
+    While the boiler water is still warm no burner start is needed: the rooms
+    take that heat through the circuit first.
+    """
     if not demands:
         return False, REASON_NO_DEMAND
+    weighted = sum(room_weight(d, cfg.urgent_delta) for d in demands)
+    urgent = cfg.smart and any(d.deficit is not None and d.deficit >= cfg.urgent_delta for d in demands)
     if currently_on:
-        return True, REASON_RUNNING
-    # Heat already in the boiler: use it before it is lost through the flue and casing.
+        if urgent or weighted >= cfg.keep_demand - 1e-9:
+            return True, REASON_RUNNING
+        return False, REASON_LOW_DEMAND
+    if urgent:
+        return True, REASON_URGENT
     if boiler_temp is not None and boiler_temp >= cfg.usable_temp:
-        return True, REASON_RESIDUAL_HEAT
+        return False, REASON_RESIDUAL_HEAT
     # A threshold above the number of rooms in the group could never be reached.
     needed = max(1, min(cfg.min_demand, max(1, member_room_count)))
     if cfg.smart:
-        if any(d.deficit is not None and d.deficit >= cfg.urgent_delta for d in demands):
-            return True, REASON_URGENT
         if longest_wait_seconds >= cfg.max_wait_seconds:
             return True, REASON_MAX_WAIT
         # Start a cold boiler early enough to be warm when the wait runs out.
         if lead_seconds > 0 and longest_wait_seconds + lead_seconds >= cfg.max_wait_seconds:
             return True, REASON_PREHEAT
-        if sum(room_weight(d, cfg.urgent_delta) for d in demands) >= needed - 1e-9:
+        if weighted >= needed - 1e-9:
             return True, REASON_WEIGHTED
         return False, REASON_WAITING
-    if len(demands) >= needed:
+    # Count only rooms that really ask for heat, not the ones holding a trickle.
+    if sum(1 for d in demands if room_weight(d, cfg.urgent_delta) >= MIN_ROOM_WEIGHT) >= needed:
         return True, REASON_COUNT
     return False, REASON_WAITING
 

@@ -31,6 +31,9 @@ export class RsQuickTemps extends LitElement {
   @property({ type: Boolean }) public preheatActive = false;
   @property({ attribute: false }) public arrivalSource: string | null = null;
   @property({ type: Boolean }) public onTrip = false;
+  /** What sets the target right now, from the room's live data. */
+  @property({ type: Boolean }) public presenceAway = false;
+  @property({ type: Boolean }) public overrideActive = false;
 
   /** Common block temperature of the active schedule in °C, null when blocks differ or carry none. */
   @state() private _scheduleDay: number | null = null;
@@ -107,10 +110,14 @@ export class RsQuickTemps extends LitElement {
     hint: string,
     inherited = false,
   ) {
-    return html`<div class="row">
+    const active = this._activePhase() === field;
+    return html`<div class="row ${active ? "active" : ""}">
       <ha-icon .icon=${icon}></ha-icon>
       <div class="text">
-        <div class="label">${label}</div>
+        <div class="label">
+          ${label}
+          ${active ? html`<span class="badge">${localize("quick.active", this.hass.language)}</span>` : nothing}
+        </div>
         ${hint ? html`<div class="hint">${hint}</div>` : nothing}
       </div>
       <button class="step" @click=${() => this._step(field, value, -1)}>−</button>
@@ -119,6 +126,14 @@ export class RsQuickTemps extends LitElement {
       >
       <button class="step" @click=${() => this._step(field, value, 1)}>+</button>
     </div>`;
+  }
+
+  /** Which row is in force now; null while an override decides. */
+  private _activePhase(): QuickTempField | null {
+    if (this.overrideActive) return null;
+    if (this.presenceAway && !this.preheatActive) return "away";
+    if (!this.scheduleEntity) return "day";
+    return this.hass.states[this.scheduleEntity]?.state === "off" ? "night" : "day";
   }
 
   render() {
@@ -149,6 +164,13 @@ export class RsQuickTemps extends LitElement {
           ? html`<button class="link" @click=${this._takeOver}>
               ${localize("quick.take_over", l)}
             </button>`
+          : nothing
+      }
+      ${
+        this.overrideActive
+          ? html`<div class="arrival">
+              <ha-icon icon="mdi:hand-back-right"></ha-icon>${localize("quick.override_active", l)}
+            </div>`
           : nothing
       }
       ${this._renderRow(
@@ -228,6 +250,28 @@ export class RsQuickTemps extends LitElement {
       grid-template-columns: 24px 1fr 34px auto 34px;
       align-items: center;
       gap: 8px;
+    }
+    .row {
+      padding: 4px 6px;
+      border-radius: 8px;
+    }
+    .row.active {
+      background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.1);
+    }
+    .row.active ha-icon {
+      color: var(--primary-color);
+    }
+    .badge {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 0 6px;
+      border-radius: 8px;
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 16px;
+      vertical-align: 1px;
+      background: var(--primary-color);
+      color: var(--text-primary-color, #fff);
     }
     .row ha-icon {
       --mdc-icon-size: 20px;

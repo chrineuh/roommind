@@ -535,6 +535,8 @@ export class RsRoomDetail extends LitElement {
                       .preheatActive=${this.config?.live?.presence_preheat_active ?? false}
                       .arrivalSource=${this.config?.live?.arrival_source ?? null}
                       .onTrip=${this.config?.live?.presence_trip ?? false}
+                      .presenceAway=${this.config?.live?.presence_away ?? false}
+                      .overrideActive=${this.config?.live?.override_active ?? false}
                       @quick-temp-changed=${this._onQuickTempChanged}
                     ></rs-quick-temps>
                     ${

@@ -204,11 +204,21 @@ class TestBoilerThermal:
 
 
 class TestBoilerDecisions:
-    def test_warm_boiler_holds_off_the_burner(self):
-        """Warm water goes to the rooms first; no burner start for it."""
-        cfg = _cfg(min_demand=1, usable_temp=45)
+    def test_warm_boiler_with_separate_pump_holds_off_the_burner(self):
+        """Pump runs on its own: the warm water reaches the rooms without a release."""
+        cfg = _cfg(min_demand=1, usable_temp=45, pump_coupled=False)
         on, reason = decide_release([_d(power=1.0, deficit=0.5)], False, cfg, 3, 0, boiler_temp=55)
-        assert (on, reason) == (False, "residual_heat")
+        assert (on, reason) == (False, "warm_hold")
+
+    def test_warm_boiler_with_pump_on_release_releases_for_one_room(self):
+        """Pump only runs with the release: one room needing heat opens it, threshold or not."""
+        cfg = _cfg(min_demand=4, usable_temp=45, pump_coupled=True)
+        on, reason = decide_release([_d(power=0.6, deficit=0.3)], False, cfg, 6, 0, boiler_temp=55)
+        assert (on, reason) == (True, "residual_heat")
+
+    def test_warm_boiler_with_pump_on_release_ignores_trickles(self):
+        cfg = _cfg(min_demand=4, usable_temp=45, pump_coupled=True)
+        assert decide_release([_d(power=0.05, deficit=-0.5)], False, cfg, 6, 0, boiler_temp=55)[0] is False
 
     def test_urgent_room_starts_even_a_warm_boiler(self):
         cfg = _cfg(smart=True, urgent_delta=1.5, usable_temp=45)
@@ -224,7 +234,7 @@ class TestBoilerDecisions:
 
     def test_preheat_starts_early_by_lead_time(self):
         cfg = _cfg(min_demand=3, smart=True, max_wait_seconds=1800, usable_temp=45)
-        small = [_d(power=0.1, deficit=0.1)]
+        small = [_d(power=0.3, deficit=0.1)]
         assert decide_release(small, False, cfg, 3, 1000, boiler_temp=30, lead_seconds=600)[0] is False
         assert decide_release(small, False, cfg, 3, 1200, boiler_temp=30, lead_seconds=600) == (True, "preheat")
 
@@ -295,3 +305,37 @@ def test_boiler_group_members_are_not_held_or_blocked():
     assert mgr.check_must_stay_active("climate.trv1") is False
     mgr.update_member("climate.trv1", False)
     assert mgr.check_can_activate("climate.trv1") is True
+
+
+def test_max_wait_also_protects_rooms_without_smart_mode():
+    """Threshold 4 and only one cold room: it must not wait forever (pump only runs with the release)."""
+    cfg = _cfg(min_demand=4, max_wait_seconds=45 * 60)
+    one = [_d("a", power=0.8, deficit=0.7)]
+    assert decide_release(one, False, cfg, 6, 30 * 60) == (False, REASON_WAITING)
+    assert decide_release(one, False, cfg, 6, 46 * 60) == (True, REASON_MAX_WAIT)
+
+
+def test_trickling_room_does_not_start_the_wait_timer():
+    mgr = BoilerReleaseManager()
+    cfg = _cfg(min_demand=4, max_wait_seconds=600)
+    trickle = [_d("a", power=0.05, deficit=-0.5)]
+    for minute in range(0, 60, 5):
+        assert mgr.evaluate("g", cfg, trickle, 6, False, 0, 0, now=minute * 60.0) is False
+        mgr.confirm("g", False, now=minute * 60.0)
+    assert mgr.get_state("g").waiting_since == {}
+
+
+def test_single_cold_room_with_pump_on_release_gets_heat_within_max_wait():
+    """Field case: release also runs the pump, threshold 4, one room needs heat, boiler cold."""
+    mgr = BoilerReleaseManager()
+    cfg = _cfg(min_demand=4, max_wait_seconds=45 * 60, usable_temp=45, pump_coupled=True)
+    room = [_d("bad", power=0.9, deficit=1.0)]
+    first_on = None
+    for minute in range(0, 120, 5):
+        want = mgr.evaluate(
+            "g", cfg, room, 8, False if first_on is None else True, 15 * 60, 5 * 60, now=minute * 60.0, boiler_temp=35.0
+        )
+        mgr.confirm("g", want, now=minute * 60.0)
+        if want and first_on is None:
+            first_on = minute
+    assert first_on is not None and first_on <= 50

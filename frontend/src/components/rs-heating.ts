@@ -604,6 +604,28 @@ export class RsHeating extends LitElement {
                   10,
                   0.1,
                 )}
+                ${num(
+                  "release_max_wait_minutes",
+                  g.release_max_wait_minutes ?? 45,
+                  localize("compressor.release_max_wait", l),
+                  localize("compressor.release_max_wait_hint", l),
+                  5,
+                  240,
+                  5,
+                  "min",
+                )}
+              </div>
+              <div class="field">
+                <ha-formfield .label=${localize("heating.pump_coupled", l)}>
+                  <ha-switch
+                    .checked=${g.release_pump_coupled ?? true}
+                    @change=${(e: Event) =>
+                      this._update(g.id, {
+                        release_pump_coupled: (e.target as HTMLInputElement).checked,
+                      })}
+                  ></ha-switch>
+                </ha-formfield>
+                <div class="hint">${localize("heating.pump_coupled_hint", l)}</div>
               </div>
               <div class="field">
                 <ha-formfield .label=${localize("compressor.release_smart", l)}>
@@ -627,16 +649,6 @@ export class RsHeating extends LitElement {
                         5,
                         0.1,
                         "K",
-                      )}
-                      ${num(
-                        "release_max_wait_minutes",
-                        g.release_max_wait_minutes ?? 45,
-                        localize("compressor.release_max_wait", l),
-                        localize("compressor.release_max_wait_hint", l),
-                        5,
-                        240,
-                        5,
-                        "min",
                       )}
                     </div>`
                   : nothing

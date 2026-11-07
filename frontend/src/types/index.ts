@@ -121,6 +121,8 @@ export interface CompressorGroup {
   release_max_wait_minutes?: number;
   /** Weighted demand that keeps a running release on. */
   release_keep_demand?: number;
+  /** The release also runs the heating circuit pump (default true). */
+  release_pump_coupled?: boolean;
   /** Boiler water temperature sensor and the temperature from which radiators get warm. */
   boiler_temp_sensor?: string;
   boiler_usable_temp?: number;

@@ -2686,6 +2686,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     max_wait_seconds=group.release_max_wait_seconds,
                     usable_temp=group.boiler_usable_temp,
                     keep_demand=group.release_keep_demand,
+                    pump_coupled=group.release_pump_coupled,
                 )
                 boiler_temp = None
                 if group.boiler_temp_sensor:

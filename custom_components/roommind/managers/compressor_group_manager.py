@@ -46,6 +46,7 @@ class CompressorGroupConfig:
     release_urgent_delta: float = DEFAULT_RELEASE_URGENT_DELTA
     release_max_wait_seconds: float = DEFAULT_RELEASE_MAX_WAIT_MINUTES * 60
     release_keep_demand: float = DEFAULT_RELEASE_KEEP_DEMAND
+    release_pump_coupled: bool = True
     boiler_temp_sensor: str = ""
     boiler_usable_temp: float = DEFAULT_BOILER_USABLE_TEMP
     burner_entity: str = ""
@@ -98,6 +99,7 @@ class CompressorGroupManager:
                 release_urgent_delta=g.get("release_urgent_delta", DEFAULT_RELEASE_URGENT_DELTA),
                 release_max_wait_seconds=g.get("release_max_wait_minutes", DEFAULT_RELEASE_MAX_WAIT_MINUTES) * 60,
                 release_keep_demand=g.get("release_keep_demand", DEFAULT_RELEASE_KEEP_DEMAND),
+                release_pump_coupled=g.get("release_pump_coupled", True),
                 boiler_temp_sensor=g.get("boiler_temp_sensor", ""),
                 boiler_usable_temp=g.get("boiler_usable_temp", DEFAULT_BOILER_USABLE_TEMP),
                 burner_entity=g.get("burner_entity", ""),

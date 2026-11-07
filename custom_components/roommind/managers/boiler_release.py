@@ -17,9 +17,10 @@ its heating circuit behave: how fast the water heats up while released and
 how fast it cools down while idle (smoothed per cycle, kept across restarts).
 That is used twice:
 
-* While the boiler water is still warm enough to heat the radiators the
-  burner is not started: the rooms use the stored heat first, which saves
-  starts and keeps the burner from short-cycling on small demands.
+* While the boiler water is still warm enough to heat the radiators it is
+  used first: with the pump on the release (common for oil boilers) the
+  release opens for any room that really needs heat, without waiting for
+  the room threshold; with a separately running pump the burner is held off.
 * Smart mode starts a cold boiler earlier by its learned heat-up time, so the
   water is warm when a waiting room reaches the maximum wait.
 
@@ -60,6 +61,7 @@ REASON_MIN_OFF = "min_off"
 REASON_RESIDUAL_HEAT = "residual_heat"
 REASON_PREHEAT = "preheat"
 REASON_LOW_DEMAND = "low_demand"
+REASON_WARM_HOLD = "warm_hold"
 
 
 @dataclass
@@ -82,6 +84,8 @@ class ReleaseConfig:
     max_wait_seconds: float = DEFAULT_RELEASE_MAX_WAIT_MINUTES * 60
     usable_temp: float = DEFAULT_BOILER_USABLE_TEMP
     keep_demand: float = DEFAULT_RELEASE_KEEP_DEMAND
+    # The release also runs the heating circuit pump: off means no heat reaches any room
+    pump_coupled: bool = True
 
 
 @dataclass
@@ -159,12 +163,18 @@ def decide_release(
     Once on, the release keeps running only while the rooms still take a real
     share of heat (weighted demand of at least ``keep_demand``); a room that
     only trickles (an MPC holding a few percent) does not keep the burner going.
-    While the boiler water is still warm no burner start is needed: the rooms
-    take that heat through the circuit first.
+
+    Warm boiler water is used before the burner starts again. When the release
+    also runs the circuit pump (``pump_coupled``) that means releasing for any
+    room that really needs heat, since without the release no heat reaches the
+    rooms at all; otherwise the release stays off and the pump carries the heat.
+
+    No room that really needs heat waits longer than ``max_wait_seconds``.
     """
     if not demands:
         return False, REASON_NO_DEMAND
     weighted = sum(room_weight(d, cfg.urgent_delta) for d in demands)
+    real = sum(1 for d in demands if room_weight(d, cfg.urgent_delta) >= MIN_ROOM_WEIGHT)
     urgent = cfg.smart and any(d.deficit is not None and d.deficit >= cfg.urgent_delta for d in demands)
     if currently_on:
         if urgent or weighted >= cfg.keep_demand - 1e-9:
@@ -173,20 +183,23 @@ def decide_release(
     if urgent:
         return True, REASON_URGENT
     if boiler_temp is not None and boiler_temp >= cfg.usable_temp:
-        return False, REASON_RESIDUAL_HEAT
+        if not cfg.pump_coupled:
+            return False, REASON_WARM_HOLD
+        if real:
+            return True, REASON_RESIDUAL_HEAT
+    if real and longest_wait_seconds >= cfg.max_wait_seconds:
+        return True, REASON_MAX_WAIT
     # A threshold above the number of rooms in the group could never be reached.
     needed = max(1, min(cfg.min_demand, max(1, member_room_count)))
     if cfg.smart:
-        if longest_wait_seconds >= cfg.max_wait_seconds:
-            return True, REASON_MAX_WAIT
         # Start a cold boiler early enough to be warm when the wait runs out.
-        if lead_seconds > 0 and longest_wait_seconds + lead_seconds >= cfg.max_wait_seconds:
+        if real and lead_seconds > 0 and longest_wait_seconds + lead_seconds >= cfg.max_wait_seconds:
             return True, REASON_PREHEAT
         if weighted >= needed - 1e-9:
             return True, REASON_WEIGHTED
         return False, REASON_WAITING
     # Count only rooms that really ask for heat, not the ones holding a trickle.
-    if sum(1 for d in demands if room_weight(d, cfg.urgent_delta) >= MIN_ROOM_WEIGHT) >= needed:
+    if real >= needed:
         return True, REASON_COUNT
     return False, REASON_WAITING
 
@@ -274,7 +287,8 @@ class BoilerReleaseManager:
         state.boiler_temp = boiler_temp
         state.lead_seconds = thermal.lead_seconds(boiler_temp, cfg.usable_temp)
 
-        demanding = {d.area_id for d in demands}
+        # Only rooms that really need heat wait; one holding a trickle must not trigger the max wait.
+        demanding = {d.area_id for d in demands if room_weight(d, cfg.urgent_delta) >= MIN_ROOM_WEIGHT}
         for area_id in list(state.waiting_since):
             if area_id not in demanding:
                 del state.waiting_since[area_id]

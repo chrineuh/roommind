@@ -846,6 +846,7 @@ def websocket_reset_boiler_learning(
                 vol.Optional("release_keep_demand", default=DEFAULT_RELEASE_KEEP_DEMAND): vol.All(
                     vol.Coerce(float), vol.Range(min=0.1, max=10)
                 ),
+                vol.Optional("release_pump_coupled", default=True): bool,
                 vol.Optional("boiler_temp_sensor", default=""): str,
                 vol.Optional("boiler_usable_temp", default=DEFAULT_BOILER_USABLE_TEMP): vol.All(
                     vol.Coerce(float), vol.Range(min=20, max=90)

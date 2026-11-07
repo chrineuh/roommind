@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -71,6 +72,7 @@ async def test_list_rooms_empty(ws_hass, store, connection):
         1,
         {
             "rooms": {},
+            "rooms_without_area": [],
             "outdoor_temp": None,
             "outdoor_humidity": None,
             "vacation_active": False,
@@ -442,6 +444,23 @@ async def test_save_room_with_schedules(ws_hass, store, connection):
     assert room["schedule_selector_entity"] == ""
     assert room["comfort_temp"] == 22.0
     assert room["eco_temp"] == 18.0
+
+
+@pytest.mark.asyncio
+async def test_list_rooms_reports_resting_rooms_separately(ws_hass, store, connection):
+    """A room whose area was deleted is not listed as a room, only as one without area (#494)."""
+    await store.async_load()
+    await store.async_save_room("kitchen", {})
+    await store.async_save_room("old_room", {"display_name": "Old room"})
+    registry = MagicMock()
+    registry.async_list_areas.return_value = [SimpleNamespace(id="kitchen")]
+
+    with patch("custom_components.roommind.utils.area_utils.ar.async_get", return_value=registry):
+        await _list_rooms(ws_hass, connection, {"id": 1, "type": "roommind/rooms/list"})
+
+    result = connection.send_result.call_args[0][1]
+    assert set(result["rooms"]) == {"kitchen"}
+    assert result["rooms_without_area"] == [{"area_id": "old_room", "display_name": "Old room"}]
 
 
 @pytest.mark.asyncio
@@ -1073,6 +1092,7 @@ async def test_list_rooms_includes_cover_override_until(ws_hass, store, connecti
             "mode": "idle",
             "cover_auto_paused": True,
             "cover_override_until": 1751700000.0,
+            "cover_reason": "window_hold",
         }
     }
     mock_coordinator.async_request_refresh = AsyncMock()
@@ -1085,6 +1105,7 @@ async def test_list_rooms_includes_cover_override_until(ws_hass, store, connecti
     live = connection.send_result.call_args[0][1]["rooms"]["schlafzimmer"]["live"]
     assert live["cover_auto_paused"] is True
     assert live["cover_override_until"] == 1751700000.0
+    assert live["cover_reason"] == "window_hold"
 
 
 @pytest.mark.asyncio
@@ -1191,6 +1212,23 @@ async def test_save_settings(ws_hass, store, connection):
     connection.send_result.assert_called_once()
     result = connection.send_result.call_args[0][1]
     assert result["settings"]["outdoor_temp_sensor"] == "sensor.outdoor"
+
+
+@pytest.mark.asyncio
+async def test_save_settings_climate_control_refreshes_at_once(ws_hass, store, connection):
+    """The panel toggle stops or resumes control and updates the switch entity now (#291)."""
+    await store.async_load()
+    coordinator = MagicMock()
+    coordinator.async_request_refresh = AsyncMock()
+    ws_hass.data[DOMAIN]["coordinator"] = coordinator
+
+    await _save_settings(
+        ws_hass, connection, {"id": 13, "type": "roommind/settings/save", "climate_control_active": False}
+    )
+    coordinator.async_request_refresh.assert_awaited_once()
+
+    await _save_settings(ws_hass, connection, {"id": 14, "type": "roommind/settings/save", "outdoor_temp_sensor": "x"})
+    coordinator.async_request_refresh.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1615,8 +1653,10 @@ async def test_analytics_with_range_key(ws_hass, store, connection):
     result = connection.send_result.call_args[0][1]
     assert len(result["detail"]) == 1
     assert result["detail"][0]["ts"] == 1000.0
+    assert "stats" in result
+    assert "rhythm" in result
     # read_detail was called with max_age=86400
-    coordinator._history_store.read_detail.assert_called_once_with("room_a", 86400)
+    coordinator._history_store.read_detail.assert_any_call("room_a", 86400)
 
 
 @pytest.mark.asyncio
@@ -1651,7 +1691,7 @@ async def test_analytics_with_custom_timestamps(ws_hass, store, connection):
 
     result = connection.send_result.call_args[0][1]
     assert len(result["detail"]) == 1
-    coordinator._history_store.read_detail.assert_called_once_with(
+    coordinator._history_store.read_detail.assert_any_call(
         "room_a",
         None,
         1000.0,
@@ -2122,10 +2162,12 @@ async def test_save_room_with_cover_schedules(ws_hass, store, connection):
         "cover_schedule_selector_entity": "input_boolean.cover_mode",
         "covers_night_close": True,
         "covers_night_position": 10,
+        "covers_window_hold": True,
     }
     await _save_room(ws_hass, connection, msg)
     connection.send_result.assert_called_once()
     room = connection.send_result.call_args[0][1]["room"]
+    assert room["covers_window_hold"] is True
     assert room["cover_schedules"] == [{"entity_id": "schedule.cover_day"}]
     assert room["cover_schedule_selector_entity"] == "input_boolean.cover_mode"
     assert room["covers_night_close"] is True
@@ -3259,3 +3301,37 @@ async def test_save_settings_presence_location_fields(ws_hass, store, connection
     assert settings["presence_trip_km"] == 150
     assert settings["presence_trip_vacation"] is False
     assert settings["presence_preheat_minutes"] == 45
+
+
+@pytest.mark.asyncio
+async def test_save_room_preheat_switch_roundtrip(ws_hass, store, connection):
+    """Per-room pre-heat switch (#478) is validated and stored."""
+    import voluptuous as vol
+
+    schema = websocket_save_room._ws_schema
+    base = {"type": "roommind/rooms/save", "id": 1, "area_id": "bedroom"}
+    assert schema({**base, "preheat_enabled": False})["preheat_enabled"] is False
+    with pytest.raises(vol.Invalid):
+        schema({**base, "preheat_enabled": "maybe"})
+
+    await store.async_load()
+    await _save_room(
+        ws_hass, connection, {"id": 11, "type": "roommind/rooms/save", "area_id": "bedroom", "preheat_enabled": False}
+    )
+    assert store.get_room("bedroom")["preheat_enabled"] is False
+
+
+def test_setback_auto_off_schema_has_no_default():
+    """Opt-in per device (#255): absent stays absent, so stored devices keep their form."""
+    import voluptuous as vol
+
+    schema = websocket_save_room._ws_schema
+
+    def _validate(device):
+        return schema({"type": "roommind/rooms/save", "id": 1, "area_id": "lr", "devices": [device]})["devices"][0]
+
+    assert "setback_auto_off" not in _validate({"entity_id": "climate.ac", "type": "ac", "idle_action": "setback"})
+    on = _validate({"entity_id": "climate.ac", "type": "ac", "idle_action": "setback", "setback_auto_off": True})
+    assert on["setback_auto_off"] is True
+    with pytest.raises(vol.Invalid):
+        _validate({"entity_id": "climate.ac", "type": "ac", "setback_auto_off": "yes"})

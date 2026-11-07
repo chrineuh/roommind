@@ -715,8 +715,10 @@ export class RsDeviceSection extends LitElement {
       isThermostat && !!this.selectedTempSensor && (deviceNumbers.length > 0 || hasValve);
     // A recognised pair needs no entity picking: one switch, the pickers stay for anything else
     const valvePair = this._detectValvePair(deviceNumbers);
+    const idleOpening = device.valve_closing_mode === "idle_opening";
     const valveAsToggle =
       !!valvePair &&
+      !idleOpening &&
       (!device.valve_opening_entity ||
         (device.valve_opening_entity === valvePair[0] &&
           device.valve_closing_entity === valvePair[1]));
@@ -817,6 +819,19 @@ export class RsDeviceSection extends LitElement {
                           (fm) => html`<ha-list-item value="${fm}">${fm}</ha-list-item>`,
                         )}
                       </ha-select>
+                    </div>`
+                  : nothing
+              }
+              ${
+                device.idle_action === "setback" && this.selectedTempSensor
+                  ? html`<div class="detail-field">
+                      <rs-toggle-row
+                        .label=${localize("devices.setback_auto_off", lang)}
+                        .hint=${localize("devices.setback_auto_off_hint", lang)}
+                        .checked=${device.setback_auto_off ?? false}
+                        @toggle-changed=${(e: CustomEvent<boolean>) =>
+                          this._onSetbackAutoOffChange(entityId, e.detail)}
+                      ></rs-toggle-row>
                     </div>`
                   : nothing
               }
@@ -1113,12 +1128,47 @@ export class RsDeviceSection extends LitElement {
                   .includeDomains=${["number"]}
                   .includeEntities=${deviceNumbers.length ? deviceNumbers : undefined}
                   .value=${device.valve_closing_entity ?? ""}
-                  .label=${localize("devices.valve_closing_entity", lang)}
+                  .label=${localize(
+                    idleOpening
+                      ? "devices.valve_idle_opening_entity"
+                      : "devices.valve_closing_entity",
+                    lang,
+                  )}
                   @value-changed=${(e: CustomEvent) =>
                     this._onValveClosingChange(entityId, e.detail.value as string)}
                 ></ha-entity-picker>
                 <rs-info-icon
                   .text=${localize("devices.valve_closing_entity_hint", lang)}
+                ></rs-info-icon>
+              </div>
+              <div class="detail-field with-info">
+                <ha-select
+                  .label=${localize("devices.valve_closing_mode", lang)}
+                  .value=${idleOpening ? "idle_opening" : "closing_degree"}
+                  .options=${[
+                    {
+                      value: "closing_degree",
+                      label: localize("devices.valve_closing_mode_closing_degree", lang),
+                    },
+                    {
+                      value: "idle_opening",
+                      label: localize("devices.valve_closing_mode_idle_opening", lang),
+                    },
+                  ]}
+                  @selected=${(e: Event) =>
+                    this._onValveClosingModeChange(entityId, getSelectValue(e)!)}
+                  @closed=${(e: Event) => e.stopPropagation()}
+                  fixedMenuPosition
+                >
+                  <ha-list-item value="closing_degree"
+                    >${localize("devices.valve_closing_mode_closing_degree", lang)}</ha-list-item
+                  >
+                  <ha-list-item value="idle_opening"
+                    >${localize("devices.valve_closing_mode_idle_opening", lang)}</ha-list-item
+                  >
+                </ha-select>
+                <rs-info-icon
+                  .text=${localize("devices.valve_closing_mode_hint", lang)}
                 ></rs-info-icon>
               </div>
             `
@@ -1177,6 +1227,7 @@ export class RsDeviceSection extends LitElement {
       if (deviceType === "ac") {
         delete updated.valve_opening_entity;
         delete updated.valve_closing_entity;
+        delete updated.valve_closing_mode;
       }
       return updated;
     });
@@ -1200,6 +1251,17 @@ export class RsDeviceSection extends LitElement {
       if (idleAction === "fan_only" && !d.idle_fan_mode) {
         updated.idle_fan_mode = "low";
       }
+      return updated;
+    });
+    this._fireDeviceChanged(newDevices);
+  }
+
+  private _onSetbackAutoOffChange(entityId: string, enabled: boolean): void {
+    const newDevices = this.devices.map((d) => {
+      if (d.entity_id !== entityId) return d;
+      const updated = { ...d };
+      if (enabled) updated.setback_auto_off = true;
+      else delete updated.setback_auto_off;
       return updated;
     });
     this._fireDeviceChanged(newDevices);
@@ -1294,6 +1356,7 @@ export class RsDeviceSection extends LitElement {
         const updated = { ...d };
         delete updated.valve_opening_entity;
         delete updated.valve_closing_entity;
+        delete updated.valve_closing_mode;
         if (pair) [updated.valve_opening_entity, updated.valve_closing_entity] = pair;
         return updated;
       }),
@@ -1311,6 +1374,7 @@ export class RsDeviceSection extends LitElement {
         if (!value) {
           delete updated.valve_opening_entity;
           delete updated.valve_closing_entity;
+          delete updated.valve_closing_mode;
           return updated;
         }
         updated.valve_opening_entity = value;
@@ -1327,6 +1391,22 @@ export class RsDeviceSection extends LitElement {
         const updated = { ...d };
         if (value) updated.valve_closing_entity = value;
         else delete updated.valve_closing_entity;
+        return updated;
+      }),
+    );
+  }
+
+  private _onValveClosingModeChange(entityId: string, value: string): void {
+    const current = this.devices.find((d) => d.entity_id === entityId)?.valve_closing_mode;
+    if (value !== "closing_degree" && value !== "idle_opening") return;
+    if (value === (current ?? "closing_degree")) return;
+    this._fireDeviceChanged(
+      this.devices.map((d) => {
+        if (d.entity_id !== entityId) return d;
+        const updated = { ...d };
+        // The default stays unstored, so devices of everyone else keep their saved form
+        if (value === "idle_opening") updated.valve_closing_mode = "idle_opening";
+        else delete updated.valve_closing_mode;
         return updated;
       }),
     );

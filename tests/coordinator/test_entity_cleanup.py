@@ -64,6 +64,11 @@ class TestCoverageGaps:
         entry_vacation.unique_id = f"{DOMAIN}_vacation"
         entry_vacation.entity_id = "switch.roommind_vacation"
 
+        entry_climate_control = MagicMock()
+        entry_climate_control.platform = DOMAIN
+        entry_climate_control.unique_id = f"{DOMAIN}_climate_control"
+        entry_climate_control.entity_id = "switch.roommind_climate_control"
+
         mock_registry.entities.values.return_value = [
             entry_valid_temp,
             entry_valid_mode,
@@ -72,6 +77,7 @@ class TestCoverageGaps:
             entry_orphaned_room,
             entry_other,
             entry_vacation,
+            entry_climate_control,
         ]
 
         with patch(
@@ -237,6 +243,28 @@ class TestCoverageGaps:
             await coordinator.async_room_removed("test_room")
 
         mock_history_store.remove_room.assert_called_once_with("test_room")
+
+    @pytest.mark.asyncio
+    async def test_a_resting_room_keeps_its_model_and_history(self, hass, mock_config_entry):
+        """Its area was deleted (#494): entities go, what it learned stays for the area's return."""
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        coordinator.async_request_refresh = AsyncMock()
+        coordinator._history_store = MagicMock()
+        coordinator._model_manager = MagicMock()
+        coordinator._entity_areas.add("old_room")
+
+        mock_registry = MagicMock()
+        mock_registry.entities.values.return_value = [
+            MagicMock(entity_id="climate.roommind_old_room", platform="roommind", unique_id="roommind_old_room_climate")
+        ]
+        with patch("homeassistant.helpers.entity_registry.async_get", return_value=mock_registry):
+            await coordinator.async_room_paused("old_room")
+
+        mock_registry.async_remove.assert_called_once_with("climate.roommind_old_room")
+        assert "old_room" not in coordinator._entity_areas
+        coordinator._model_manager.remove_room.assert_not_called()
+        coordinator._history_store.remove_room.assert_not_called()
+        coordinator.async_request_refresh.assert_not_awaited()
 
     def test_cleanup_keeps_entities_when_area_id_is_prefix_of_another(self, hass, mock_config_entry):
         """A shorter area_id must not claim a longer room's entities (#340).

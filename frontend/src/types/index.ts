@@ -59,6 +59,7 @@ export interface RoomLiveData {
   cover_auto_paused: boolean;
   cover_override_until?: number | null;
   cover_forced_reason: string;
+  cover_reason?: string;
   active_cover_schedule_index: number;
   active_heat_sources: string | null;
   learning_paused_reason: "outdoor_unavailable" | null;
@@ -90,6 +91,7 @@ export interface DeviceConfig {
   heating_system_type?: string;
   idle_action?: "off" | "fan_only" | "setback" | "low"; // default "off"
   idle_fan_mode?: string; // default "low"
+  setback_auto_off?: boolean; // setback ends in off after an hour without demand, default off (#255)
   setpoint_mode?: "proportional" | "direct"; // default "proportional"
   setpoint_offset?: number; // °C added to the room target in direct mode, default 0
   coil_dry?: "inherit" | "on" | "off"; // default "inherit"
@@ -98,10 +100,17 @@ export interface DeviceConfig {
   coil_dry_fan_mode?: string; // "" = inherit global, "__keep__" = keep current
   valve_opening_entity?: string; // number entity for direct valve opening degree (0-100%)
   valve_closing_entity?: string; // number entity for direct valve closing degree (0-100%)
+  valve_closing_mode?: "closing_degree" | "idle_opening"; // idle_opening: the second entity is the opening while idle (SONOFF TRV-ZBT)
 }
 
 export type ConflictResolution =
   "heating_priority" | "cooling_priority" | "majority" | "outdoor_temp";
+
+/** A stored room whose Home Assistant area was deleted; it rests until the area is back (#494). */
+export interface RoomWithoutArea {
+  area_id: string;
+  display_name: string;
+}
 
 export interface CompressorGroup {
   id: string;
@@ -161,6 +170,8 @@ export interface RoomConfig {
   occupancy_sensors?: string[];
   occupancy_eco_enabled?: boolean;
   occupancy_eco_delay?: number;
+  preheat_enabled?: boolean;
+  follow_device_setpoint?: boolean;
   window_sensors: string[];
   window_open_delay: number;
   window_close_delay: number;
@@ -194,6 +205,7 @@ export interface RoomConfig {
   covers_night_close_elevation?: number;
   covers_night_close_offset_minutes?: number;
   covers_snap_deploy?: boolean;
+  covers_window_hold?: boolean;
   cover_min_positions?: Record<string, number>;
   ignore_presence?: boolean;
   show_thermostat?: boolean;
@@ -325,12 +337,45 @@ export interface AnalyticsDataPoint {
   blind_position?: number | null;
   cover_reason?: string;
   device_setpoint?: number | null;
+  humidity?: number | null;
+}
+
+export interface AnalyticsStats {
+  hours: number;
+  heating_hours: number;
+  cooling_hours: number;
+  window_hours: number;
+  heating_starts: number;
+  cooling_starts: number;
+  comfort: {
+    below_pct: number;
+    within_pct: number;
+    above_pct: number;
+    mean_deviation: number;
+  } | null;
+}
+
+export interface RhythmDay {
+  date: string;
+  heat: Array<number | null>;
+  cool: Array<number | null>;
+  window: Array<number | null>;
+  deviation: Array<number | null>;
+  temp: Array<number | null>;
+  humidity: Array<number | null>;
+  outdoor: Array<number | null>;
+}
+
+export interface AnalyticsRhythm {
+  days: RhythmDay[];
 }
 
 export interface AnalyticsData {
   detail: AnalyticsDataPoint[];
   history: AnalyticsDataPoint[];
   forecast?: AnalyticsDataPoint[];
+  stats?: AnalyticsStats;
+  rhythm?: AnalyticsRhythm | null;
   model: {
     confidence: number;
     model: {

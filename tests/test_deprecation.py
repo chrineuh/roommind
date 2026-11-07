@@ -64,7 +64,10 @@ def test_issue_lists_used_deprecated_entities(hass):
             "climate.roommind_living_room_override": ["automation.wall_dial"],
             "climate.roommind_living_room": ["automation.new_style"],
         },
-        scripts={"switch.roommind_living_room_climate_control": ["script.leave_home"]},
+        scripts={
+            "switch.roommind_living_room_climate_control": ["script.leave_home"],
+            "sensor.roommind_living_room_mode": ["script.show_mode"],
+        },
     )
     delete.assert_not_called()
     create.assert_called_once()
@@ -73,7 +76,7 @@ def test_issue_lists_used_deprecated_entities(hass):
     assert kwargs["is_fixable"] is False
     assert kwargs["translation_placeholders"]["entities"] == (
         "- `climate.roommind_living_room_override` → `climate.roommind_living_room` (automation.wall_dial)\n"
-        "- `switch.roommind_living_room_climate_control` → `climate.roommind_living_room` (script.leave_home)"
+        "- `sensor.roommind_living_room_mode` → `climate.roommind_living_room` (script.show_mode)"
     )
 
 
@@ -82,6 +85,7 @@ def test_no_issue_while_nothing_uses_them(hass):
         _entry("roommind_living_room_override", "climate.roommind_living_room_override"),
         _entry("roommind_living_room_target_temp", "sensor.roommind_living_room_target_temp", disabled=True),
         _entry("roommind_vacation", "switch.roommind_vacation"),
+        _entry("roommind_climate_control", "switch.roommind_climate_control"),
         _entry("roommind_x_mode_climate", "climate.roommind_x_mode"),
         _entry("roommind_other_override", "climate.roommind_other_override", platform="template"),
         _entry(42, "sensor.weird"),
@@ -92,6 +96,7 @@ def test_no_issue_while_nothing_uses_them(hass):
         automations={
             "sensor.roommind_living_room_target_temp": ["automation.disabled_entity"],
             "switch.roommind_vacation": ["automation.vacation"],
+            "switch.roommind_climate_control": ["automation.summer"],
             "climate.roommind_x_mode": ["automation.room_named_mode"],
         },
     )
@@ -135,11 +140,11 @@ def test_schedule_waits_for_startup(hass):
 
 
 def test_deprecated_use_is_logged_once_per_entity(caplog):
-    deprecation._warned.discard("switch.roommind_kitchen_climate_control")
-    deprecation.warn_deprecated_use("switch.roommind_kitchen_climate_control", "kitchen")
-    deprecation.warn_deprecated_use("switch.roommind_kitchen_climate_control", "kitchen")
+    deprecation._warned.discard("sensor.roommind_kitchen_mode")
+    deprecation.warn_deprecated_use("sensor.roommind_kitchen_mode", "kitchen")
+    deprecation.warn_deprecated_use("sensor.roommind_kitchen_mode", "kitchen")
     messages = [r.getMessage() for r in caplog.records if "deprecated" in r.getMessage()]
     assert messages == [
-        "switch.roommind_kitchen_climate_control is deprecated and will be removed in a future release, "
+        "sensor.roommind_kitchen_mode is deprecated and will be removed in a future release, "
         "use climate.roommind_kitchen instead"
     ]

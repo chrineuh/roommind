@@ -20,6 +20,7 @@
 - **Solar Gain Awareness** - Estimates solar irradiance from sun position and weather data. The model learns each room's solar response and reduces unnecessary heating.
 - **Multi-Scheduler** - Multiple `schedule.*` entities per room with selector switching via `input_boolean` or `input_number`.
 - **Manual Override** - Boost, eco, or custom temperature with configurable duration and instant UI feedback.
+- **Changes Made on the Device** - Per room, optional (in the schedule settings). A temperature set on the TRV dial or the AC remote becomes the room target until the next schedule change, instead of being replaced by RoomMind. Needs devices that report their setpoint to Home Assistant; leave it off for devices that run their own schedule or are changed by automations, since RoomMind cannot tell those changes from a hand on the dial.
 - **Presence Detection** - Link `person.*`, `device_tracker.*`, `binary_sensor.*`, or `input_boolean.*` entities globally or per room. Eco temperature is used when all assigned persons are away.
 - **Ignore Presence per Room** - Rooms can opt out of presence detection to always follow their schedule.
 - **Eco When the Room Is Empty** - Per room, optional. Occupancy sensors (motion, presence) always help the thermal model learn how much heat people and devices add. With "Eco when the room is empty" turned on, they also control the room: once every occupancy sensor has reported the room empty for the delay (default 15 minutes), the room drops to its eco temperature, and it returns to its schedule as soon as someone is detected again. An empty room never gets a higher target than its schedule, and "off" stays off. An empty room is kept at eco and only heats to comfort once someone is in it, so a slow heating system may need an eco temperature close to comfort. An unavailable or missing sensor counts as occupied, and after a Home Assistant restart the delay starts over.
@@ -27,17 +28,18 @@
 - **Window/Door Pause** - Pauses climate control when windows or doors are open, with configurable open/close delays.
   After a restart, RoomMind waits until the window sensors report a state (at most 5 minutes; a sensor that is still unavailable then counts as closed). A sensor that no longer exists at all (deleted or renamed) counts as closed right away once Home Assistant has finished starting, with a warning in the log. A sensor that drops out briefly keeps its last state.
 - **Mold Risk Detection & Prevention** - Surface humidity estimation using the DIN 4108-2 method. Configurable notifications and automatic temperature raise to prevent mold growth.
-- **Automatic Blind/Cover Shading** - Smart cover deployment based on predicted solar overheating. Includes night close, manual override detection, and cover schedules.
+- **Automatic Blind/Cover Shading** - Smart cover deployment based on predicted solar overheating. Includes night close, manual override detection, cover schedules, and an optional per-room hold that keeps covers up while a window is open (checked every 30 s, a cover already moving is not stopped).
 - **Valve Protection** - Periodic cycling of idle TRV valves to prevent seizing and calcification.
 - **Heat Source Orchestration** - Rooms with both TRVs and ACs automatically route heating demand to the most efficient device based on temperature gap and outdoor conditions.
 - **Compressor Group Protection** - Define groups of climate devices sharing an outdoor compressor. Enforces minimum run and off times to prevent short-cycling. Until `min_run_minutes` has elapsed, a device keeps its last active setpoint, including a boost setpoint, so the room can overshoot its target further than without protection. A target that changes on purpose in the meantime (override, vacation, schedule off, presence) is passed on to the device right away (a device with a single heat/cool setpoint only when that cannot push the room the wrong way).
-- **Fan-only & Setback Idle Modes** - AC and heat pump devices can switch to fan-only or setback mode instead of turning off, keeping air circulation or low-load operation active. Setback still turns the device off after a long pause with no demand ahead.
+- **Fan-only & Setback Idle Modes** - AC and heat pump devices can switch to fan-only or setback mode instead of turning off, keeping air circulation or low-load operation active. Optionally, setback turns the device off after a long pause with no demand ahead.
 - **Per-Device Setpoint Mode** - Choose proportional (boost setpoint) or direct (exact target) control per device for optimal results with different hardware. For direct devices whose internal sensor reads differently from your room sensor, a setpoint offset shifts the temperature sent to the device.
 - **Direct Valve Control** - TRVs that expose their valve opening as `number` entities (e.g. SONOFF TRVZB) are held at the opening the room needs instead of switching between fully open and closed: fewer valve movements, quieter and steadier heat.
 - **Separate Heat/Cool Targets** - Independent comfort and eco temperatures for heating and cooling in auto mode, creating a natural dead-band.
 - **Per-Room Climate Toggle** - Disable climate control for individual rooms while keeping other rooms active.
 - **Outdoor Areas** - Mark rooms as outdoor (e.g. balcony) to disable climate control while keeping monitoring.
-- **Analytics Dashboard** - Temperature charts with heating power, solar irradiance, and model predictions over 24h to 90 days.
+- **Dashboard Card** - A room card for any dashboard with temporary override, mode, climate control switch and comfort/eco temperatures, each part optional. See [Dashboard Card](#dashboard-card).
+- **Analytics Dashboard** - Temperature and humidity charts with heating power, solar irradiance, and model predictions over 24h to 90 days, plus time on target, running hours, a daily rhythm view and the learned heat loss.
 - **Mobile Ready** - Responsive layout with HA-native toolbar for the companion app.
 - **Multilingual** - English and German, auto-detected from your HA language setting.
 
@@ -71,11 +73,40 @@ After installation, RoomMind appears as a panel in the HA sidebar.
 
 RoomMind starts controlling immediately. If MPC is enabled (default), the thermal model begins learning in the background.
 
+## Dashboard Card
+
+Put a RoomMind room on any dashboard: Edit dashboard → Add card → **RoomMind room**. The card ships with the integration, no resource needs to be added. After installing or updating RoomMind, reload the browser tab (or restart the companion app) once so the card is found.
+
+It shows the room's temperature, target, humidity and what RoomMind is doing, plus:
+
+- **Temporary override** - Comfort, Eco or a custom temperature for 1, 2 or 4 hours, with the time left. Tap the active one to end it.
+- **Mode** - Auto, Heat only or Cool only, same as in the panel
+- **Climate control switch** - turns RoomMind's control of the room on or off, same as the switch in the panel
+- **Comfort and eco temperatures** - change the room's comfort and eco targets
+
+Each part can be hidden in the card editor, e.g. a card for the family that only offers the override. **Compact layout** makes the card smaller: icon-only buttons side by side and a smaller status block; with every part hidden it is a plain status card. Hiding only changes what the card shows: every Home Assistant user can still change these settings in the RoomMind panel. Tap the room name to open the room in the panel. Outdoor areas show their readings only. In YAML:
+
+```yaml
+type: custom:roommind-room-card
+area: living_room           # area ID of the room
+compact: false
+hide_override: false
+hide_mode: false
+hide_climate_control: false
+hide_temperatures: false
+```
+
 ## Analytics
 
 ![Analytics](docs/images/page-analytics.png)
 
-Select a room and time range (24h / 7d / 30d / 90d / custom) to view temperature history, heating/cooling power, solar irradiance, and model predictions. Export as CSV or diagnostics report.
+Select a room and time range (24h / 7d / 30d / 90d / custom) to view temperature and humidity history, heating/cooling power, solar irradiance, and model predictions. Export as CSV or diagnostics report.
+
+- **This period**: time on target (within 0.5° of the wanted band, open windows left out), too cold/too warm shares, mean deviation, heating and cooling hours with the number of runs, and window-open hours.
+- **Daily rhythm**: an overview of at least 14 days by hour, with the selected range marked. It stays on the latest days, grows with a longer range (up to 31 days) and moves back for an older one. One view shows when the room heats or cools and when windows were open, the other when it missed its target. Hover or tap an hour for its figures, tap a day to show it in the chart above.
+- **Heat loss** in the model card: how many degrees per hour the room loses without heating at 10° difference to outside, for comparing rooms or a renovation before and after. Degrees per hour, not watts, because RoomMind does not know the size of the room.
+
+Humidity needs a humidity sensor on the room. Humidity and time on target start with the first readings after the update, older history has neither.
 
 ## How It Works
 
@@ -116,6 +147,7 @@ For a more detailed explanation of the `Priority` slider, device types, setpoint
 |--------|-------------|
 | `climate.roommind_{area_id}` | The room as one thermostat, see [Room climate entity](#room-climate-entity) |
 | `switch.roommind_vacation` | Global vacation mode toggle |
+| `switch.roommind_climate_control` | Global climate control toggle, the same as `Settings -> General`. Off stops RoomMind controlling all rooms and leaves the devices as they are, e.g. for a summer/winter automation |
 | `switch.roommind_{area_id}_cover_auto` | Per-room automatic cover control toggle |
 | `binary_sensor.roommind_{area_id}_cover_paused` | On when manual cover override is detected |
 
@@ -153,7 +185,8 @@ These per-room entities still work but will be removed in a future release. If a
 | `sensor.roommind_{area_id}_target_temp` | Target temperature of `climate.roommind_{area_id}` |
 | `sensor.roommind_{area_id}_mode` | `hvac_action` of `climate.roommind_{area_id}` |
 | `climate.roommind_{area_id}_override` | `climate.set_temperature` or a preset on `climate.roommind_{area_id}`. Unlike the old entity, an override there ends at the next schedule change. |
-| `switch.roommind_{area_id}_climate_control` | `climate.turn_on` / `climate.turn_off` on `climate.roommind_{area_id}`. Unlike the old switch, off also switches the devices off. |
+
+`switch.roommind_{area_id}_climate_control` is not deprecated and stays. Its off only stops RoomMind controlling the room and leaves the devices as they are; `climate.turn_off` on the room entity switches them off.
 
 ## Troubleshooting
 

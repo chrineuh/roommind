@@ -63,6 +63,7 @@ def _build_device_states(hass: HomeAssistant, devices: list[dict]) -> list[dict[
             "role": dev.get("role", ""),
             "idle_action": dev.get("idle_action", "off"),
             "idle_fan_mode": dev.get("idle_fan_mode", ""),
+            "setback_auto_off": dev.get("setback_auto_off", False),
             "setpoint_mode": dev.get("setpoint_mode", "proportional"),
             "setpoint_offset": dev.get("setpoint_offset", 0.0),
             "coil_dry": dev.get("coil_dry", "inherit"),
@@ -71,6 +72,7 @@ def _build_device_states(hass: HomeAssistant, devices: list[dict]) -> list[dict[
             "coil_dry_fan_mode": dev.get("coil_dry_fan_mode", ""),
             "valve_opening_entity": dev.get("valve_opening_entity", ""),
             "valve_closing_entity": dev.get("valve_closing_entity", ""),
+            "valve_closing_mode": dev.get("valve_closing_mode", "closing_degree"),
         }
         if state:
             attrs = state.attributes

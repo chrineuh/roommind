@@ -3,7 +3,7 @@
  * Owns all state, loads/saves settings, delegates rendering to sub-components
  * wrapped in ha-expansion-panel accordion sections.
  */
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type {
   HomeAssistant,
@@ -12,6 +12,7 @@ import type {
   NotificationTarget,
   CompressorGroup,
   CompressorReleaseStatus,
+  RoomWithoutArea,
 } from "../types";
 import { localize } from "../utils/localize";
 import { fireSaveStatus } from "../utils/events";
@@ -29,6 +30,7 @@ import "./settings/rs-settings-mold";
 import "./settings/rs-settings-notifications";
 import "./settings/rs-settings-learning";
 import "./settings/rs-settings-reset";
+import "./settings/rs-settings-orphans";
 
 @customElement("rs-settings")
 export class RsSettings extends LitElement {
@@ -38,6 +40,9 @@ export class RsSettings extends LitElement {
     string,
     CompressorReleaseStatus
   > = {};
+  @property({ attribute: false }) public roomsWithoutArea: RoomWithoutArea[] = [];
+  @property({ type: Boolean }) public climateControlActive = true;
+  @state() private _deletedOrphans: ReadonlySet<string> = new Set();
 
   @state() private _groupByFloor = false;
   @state() private _climateControlActive = true;
@@ -91,6 +96,9 @@ export class RsSettings extends LitElement {
   private _saveDebounce?: ReturnType<typeof setTimeout>;
   /** Saves run one after another so an older request can never overwrite a newer one. */
   private _saveChain: Promise<void> = Promise.resolve();
+  // switch.roommind_climate_control can change it while this page is open (#291), so it
+  // is only sent after the toggle here was used, never as a stale copy with other settings.
+  private _climateControlDirty = false;
 
   connectedCallback() {
     super.connectedCallback();
@@ -173,14 +181,47 @@ export class RsSettings extends LitElement {
     }
   }
 
+  protected willUpdate(changed: Map<string, unknown>) {
+    if (changed.has("roomsWithoutArea") && this._deletedOrphans.size) {
+      // The list from the backend is current again; an id resting later must show up again
+      const listed = new Set(this.roomsWithoutArea.map((r) => r.area_id));
+      this._deletedOrphans = new Set([...this._deletedOrphans].filter((id) => listed.has(id)));
+    }
+    if (
+      changed.has("climateControlActive") &&
+      changed.get("climateControlActive") !== undefined &&
+      !this._climateControlDirty
+    ) {
+      this._climateControlActive = this.climateControlActive;
+    }
+  }
+
   protected render() {
     if (!this._loaded) {
       return html`<div class="loading">${localize("panel.loading", this.hass.language)}</div>`;
     }
 
     const l = this.hass.language;
+    const orphans = this.roomsWithoutArea.filter((r) => !this._deletedOrphans.has(r.area_id));
 
     return html`
+      ${
+        orphans.length
+          ? html`<rs-settings-panel
+              icon="mdi:home-remove-outline"
+              .heading=${localize("settings.orphans_title", l)}
+              .intro=${localize("settings.intro.orphans", l)}
+            >
+              <rs-settings-orphans
+                .hass=${this.hass}
+                .rooms=${orphans}
+                @orphan-deleted=${(e: CustomEvent<string>) => {
+                  this._deletedOrphans = new Set([...this._deletedOrphans, e.detail]);
+                }}
+              ></rs-settings-orphans>
+            </rs-settings-panel>`
+          : nothing
+      }
       <rs-settings-panel
         icon="mdi:power"
         .heading=${localize("settings.general_title", l)}
@@ -374,6 +415,7 @@ export class RsSettings extends LitElement {
 
   private _onSettingChanged(e: CustomEvent<{ key: string; value: unknown }>) {
     const { key, value } = e.detail;
+    if (key === "climateControlActive") this._climateControlDirty = true;
     (this as Record<string, unknown>)[`_${key}`] = value;
     this._autoSave();
   }
@@ -412,26 +454,35 @@ export class RsSettings extends LitElement {
 
   private _doSave(): Promise<void> {
     // Snapshot now; send after any save that is still on the wire.
-    const payload = this._buildSavePayload();
-    this._saveChain = this._saveChain.then(() => this._sendSave(payload));
+    // switch.roommind_climate_control can change it while this page is open (#291), so it
+    // is only sent after the toggle here was used, never as a stale copy with other settings.
+    const sentClimateControl = this._climateControlDirty ? this._climateControlActive : undefined;
+    const payload = this._buildSavePayload(sentClimateControl);
+    this._saveChain = this._saveChain.then(() => this._sendSave(payload, sentClimateControl));
     return this._saveChain;
   }
 
-  private async _sendSave(payload: Record<string, unknown>) {
+  private async _sendSave(payload: Record<string, unknown>, sentClimateControl?: boolean) {
     fireSaveStatus(this, "saving");
     try {
       await this.hass.callWS(payload);
+      // Toggled again while the request was out: stays dirty, the queued save sends it.
+      if (this._climateControlActive === sentClimateControl) this._climateControlDirty = false;
       fireSaveStatus(this, "saved");
     } catch {
+      if (this._climateControlActive === sentClimateControl) {
+        this._climateControlDirty = false;
+        this._climateControlActive = this.climateControlActive;
+      }
       fireSaveStatus(this, "error");
     }
   }
 
-  private _buildSavePayload(): Record<string, unknown> {
+  private _buildSavePayload(sentClimateControl: boolean | undefined): Record<string, unknown> {
     return {
       type: "roommind/settings/save",
       group_by_floor: this._groupByFloor,
-      climate_control_active: this._climateControlActive,
+      ...(sentClimateControl !== undefined ? { climate_control_active: sentClimateControl } : {}),
       learning_disabled_rooms: this._learningDisabledRooms,
       outdoor_temp_sensor: this._outdoorTempSensor,
       outdoor_humidity_sensor: this._outdoorHumiditySensor,

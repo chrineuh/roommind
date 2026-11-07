@@ -26,6 +26,7 @@ from ..control.mpc_controller import (
     is_mpc_active,
 )
 from ..control.solar import compute_q_solar_norm
+from .analytics_stats import compute_period_stats, compute_rhythm, rhythm_window
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,6 +83,9 @@ def _csv_to_points(rows: list[dict]) -> list[dict]:
                 "blind_position": _safe_int(row.get("blind_position", "")),
                 "cover_reason": row.get("cover_reason", ""),
                 "device_setpoint": _safe_float(row.get("device_setpoint", "")),
+                "humidity": _safe_float(row.get("humidity", "")),
+                "heat_target": _safe_float(row.get("heat_target", "")),
+                "cool_target": _safe_float(row.get("cool_target", "")),
             }
         )
     return result
@@ -205,6 +209,8 @@ async def build_analytics_data(
     # Read history data -- custom timestamps take precedence over range preset
     detail: list = []
     history: list = []
+    now = time.time()
+    range_start = custom_start if custom_start is not None else now - 43200
     if history_store:
         if custom_start is not None:
             detail = _csv_to_points(
@@ -224,8 +230,27 @@ async def build_analytics_data(
                 "90d": 7776000,
             }
             max_age = max_age_map.get(range_key, 43200)
+            range_start = now - max_age
             detail = _csv_to_points(await hass.async_add_executor_job(history_store.read_detail, area_id, max_age))
             history = _csv_to_points(await hass.async_add_executor_job(history_store.read_history, area_id, max_age))
+
+    room_config = store.get_room(area_id) or {}
+    climate_mode = room_config.get("climate_mode", "auto")
+    stats = compute_period_stats(sorted(history + detail, key=lambda p: p["ts"]), climate_mode)
+
+    rhythm: dict | None = None
+    if history_store:
+        rhythm_days, rhythm_end = rhythm_window(range_start, custom_end if custom_end is not None else now, now)
+        rhythm_start = rhythm_end - (rhythm_days + 1) * 86400
+        rhythm_rows = await hass.async_add_executor_job(
+            history_store.read_history, area_id, None, rhythm_start, rhythm_end
+        )
+        rhythm_rows += await hass.async_add_executor_job(
+            history_store.read_detail, area_id, None, rhythm_start, rhythm_end
+        )
+        rhythm = compute_rhythm(
+            sorted(_csv_to_points(rhythm_rows), key=lambda p: p["ts"]), climate_mode, rhythm_end, rhythm_days
+        )
 
     # Model info (only if estimator exists -- avoid auto-creating for unknown rooms)
     model_info: dict = {}
@@ -237,7 +262,6 @@ async def build_analytics_data(
             rc = est.get_model()
             pred_std_idle = est.prediction_std(0.0, 20.0, 15.0, 5.0)
             pred_std_heat = est.prediction_std(rc.Q_heat, 20.0, 10.0, 5.0)
-            room_config = store.get_room(area_id) or {}
             has_ext_sensor = bool(room_config.get("temperature_sensor"))
             if has_ext_sensor:
                 can_heat, can_cool = get_can_heat_cool(
@@ -283,7 +307,6 @@ async def build_analytics_data(
             }
 
     # Build merged forecast: same format as history points, on a shared 5-min grid
-    room_config = store.get_room(area_id) or {}
     mold_delta = 0.0
     room_vacant = False
     if coordinator:
@@ -427,4 +450,6 @@ async def build_analytics_data(
         "history": history,
         "model": model_info,
         "forecast": forecast,
+        "stats": stats,
+        "rhythm": rhythm,
     }
